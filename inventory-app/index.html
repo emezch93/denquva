@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Duka — Shop Manager</title>
+<meta name="theme-color" content="#0F6B4C" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink: '#16241D',
+          paper: '#FAF7F1',
+          surface: '#FFFFFF',
+          primary: { DEFAULT: '#0F6B4C', dark: '#0B5038', light: '#E4F1EA' },
+          amber: { DEFAULT: '#E2932E', dark: '#B9721B', light: '#FBEBD3' },
+          danger: { DEFAULT: '#C1443C', light: '#F8E2DF' },
+        },
+        fontFamily: {
+          display: ['Manrope', 'sans-serif'],
+          body: ['Inter', 'sans-serif'],
+        },
+      },
+    },
+  };
+</script>
+<link rel="stylesheet" href="css/app.css" />
+</head>
+<body class="bg-paper text-ink font-body antialiased min-h-screen pb-20 md:pb-0 md:pl-64">
+
+  <!-- Desktop sidebar -->
+  <aside class="hidden md:flex md:flex-col md:fixed md:inset-y-0 md:left-0 md:w-64 bg-primary-dark text-white px-5 py-6">
+    <div class="font-display text-2xl font-extrabold tracking-tight mb-8">Duka</div>
+    <nav class="flex flex-col gap-1" id="sidebar-nav"></nav>
+    <div class="mt-auto text-xs text-white/60 pt-6">Simple stock and sales, in your pocket.</div>
+  </aside>
+
+  <!-- Top bar (mobile) -->
+  <header class="md:hidden sticky top-0 z-30 bg-primary-dark text-white px-4 py-3 flex items-center justify-between">
+    <span class="font-display text-lg font-extrabold" id="mobile-title">Dashboard</span>
+    <span id="offline-pill" class="hidden text-xs bg-white/15 rounded-full px-2 py-1">Offline</span>
+  </header>
+
+  <main id="app" class="max-w-3xl mx-auto px-4 py-5 md:py-8"></main>
+
+  <!-- Bottom nav (mobile) -->
+  <nav class="md:hidden fixed bottom-0 inset-x-0 z-30 bg-surface border-t border-black/5 flex justify-around py-1.5" id="bottom-nav"></nav>
+
+  <!-- Sell modal -->
+  <div id="sell-modal" class="hidden fixed inset-0 z-40 bg-black/40 flex items-end md:items-center justify-center">
+    <div class="bg-surface w-full md:max-w-sm rounded-t-3xl md:rounded-3xl p-6" id="sell-modal-body"></div>
+  </div>
+
+  <!-- Add stock modal -->
+  <div id="stock-modal" class="hidden fixed inset-0 z-40 bg-black/40 flex items-end md:items-center justify-center">
+    <div class="bg-surface w-full md:max-w-sm rounded-t-3xl md:rounded-3xl p-6" id="stock-modal-body"></div>
+  </div>
+
+  <!-- Product form modal -->
+  <div id="product-modal" class="hidden fixed inset-0 z-40 bg-black/40 flex items-end md:items-center justify-center overflow-y-auto">
+    <div class="bg-surface w-full md:max-w-md rounded-t-3xl md:rounded-3xl p-6 my-auto" id="product-modal-body"></div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="hidden fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 bg-ink text-white text-sm px-4 py-2.5 rounded-full shadow-lg"></div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
