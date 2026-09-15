@@ -1,7 +1,4 @@
-// This caches only the app shell (the interface), not your data.
-// Data always comes fresh from the Worker/API when online.
-
-const CACHE_NAME = "duka-shell-v1";
+const CACHE_NAME = "duka-shell-v2";
 const SHELL_FILES = [
   "./",
   "./index.html",
