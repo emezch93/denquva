@@ -2,14 +2,25 @@ const API_BASE = "https://duka-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = false;
 
 const CURRENCY = "₦";
+let authToken = localStorage.getItem("duka_token") || null;
+let currentShop = null; // { shop_name, email, subscription_status }
+
+async function authFetch(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+  return fetch(url, { ...options, headers });
+}
+
+function logout() {
+  authToken = null;
+  currentShop = null;
+  localStorage.removeItem("duka_token");
+  render();
+}
 
 function formatMoney(n) {
   return CURRENCY + Number(n || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 });
 }
-
-// Resizes and compresses an uploaded image before it's stored as a
-// base64 string. Keeps rows in D1 small instead of needing separate
-// file storage, which this project's stack intentionally avoids.
 function compressImageToDataUrl(file, maxW = 400, maxH = 400, quality = 0.7) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -76,7 +87,7 @@ const Api = {
         !term || p.name.toLowerCase().includes(term) || p.sku.toLowerCase().includes(term) || p.category.toLowerCase().includes(term)
       );
     }
-    const res = await fetch(`${API_BASE}/api/products?search=${encodeURIComponent(search)}`);
+    const res = await authFetch(`${API_BASE}/api/products?search=${encodeURIComponent(search)}`);
     return apiJson(res);
   },
 
@@ -86,7 +97,7 @@ const Api = {
       sampleProducts.push(product);
       return product;
     }
-    const res = await fetch(`${API_BASE}/api/products`, {
+    const res = await authFetch(`${API_BASE}/api/products`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
     });
     return apiJson(res);
@@ -98,7 +109,7 @@ const Api = {
       Object.assign(p, data);
       return p;
     }
-    const res = await fetch(`${API_BASE}/api/products/${id}`, {
+    const res = await authFetch(`${API_BASE}/api/products/${id}`, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
     });
     return apiJson(res);
@@ -109,7 +120,7 @@ const Api = {
       sampleProducts = sampleProducts.filter(p => p.id !== id);
       return { success: true };
     }
-    const res = await fetch(`${API_BASE}/api/products/${id}`, { method: "DELETE" });
+    const res = await authFetch(`${API_BASE}/api/products/${id}`, { method: "DELETE" });
     return apiJson(res);
   },
 
@@ -128,7 +139,7 @@ const Api = {
       });
       return { success: true, new_quantity: p.quantity, total_amount: totalAmount, estimated_profit: estimatedProfit };
     }
-    const res = await fetch(`${API_BASE}/api/sales`, {
+    const res = await authFetch(`${API_BASE}/api/sales`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ product_id: productId, quantity }),
     });
@@ -141,7 +152,7 @@ const Api = {
       p.quantity += quantity;
       return { success: true, new_quantity: p.quantity };
     }
-    const res = await fetch(`${API_BASE}/api/stock-movements`, {
+    const res = await authFetch(`${API_BASE}/api/stock-movements`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ product_id: productId, quantity, cost_per_unit: costPerUnit, supplier, note }),
     });
@@ -160,7 +171,7 @@ const Api = {
         return true;
       });
     }
-    const res = await fetch(`${API_BASE}/api/sales?range=${range}`);
+    const res = await authFetch(`${API_BASE}/api/sales?range=${range}`);
     return apiJson(res);
   },
 
@@ -177,7 +188,7 @@ const Api = {
         recent_sales: sampleSales.slice(0, 10),
       };
     }
-    const res = await fetch(`${API_BASE}/api/dashboard`);
+    const res = await authFetch(`${API_BASE}/api/dashboard`);
     return apiJson(res);
   },
 
@@ -185,7 +196,7 @@ const Api = {
     if (USE_SAMPLE_DATA) {
       return { answer: "The AI assistant will answer using your real sales data once the Worker and AI key are connected. For now this is sample mode." };
     }
-    const res = await fetch(`${API_BASE}/api/ai`, {
+    const res = await authFetch(`${API_BASE}/api/ai`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }),
     });
     return apiJson(res);
@@ -195,7 +206,7 @@ const Api = {
     if (USE_SAMPLE_DATA) {
       return { description: `${name} — a reliable ${category.toLowerCase() || "product"} your customers ask for regularly.` };
     }
-    const res = await fetch(`${API_BASE}/api/ai/product-description`, {
+    const res = await authFetch(`${API_BASE}/api/ai/product-description`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, category, extra }),
     });
     return apiJson(res);
@@ -205,7 +216,7 @@ const Api = {
     if (USE_SAMPLE_DATA) {
       return sampleSettings;
     }
-    const res = await fetch(`${API_BASE}/api/settings`);
+    const res = await authFetch(`${API_BASE}/api/settings`);
     return apiJson(res);
   },
 
@@ -214,9 +225,35 @@ const Api = {
       Object.assign(sampleSettings, data);
       return sampleSettings;
     }
-    const res = await fetch(`${API_BASE}/api/settings`, {
+    const res = await authFetch(`${API_BASE}/api/settings`, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
     });
+    return apiJson(res);
+  },
+
+  async signup({ shop_name, email, password }) {
+    const res = await fetch(`${API_BASE}/auth/signup`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shop_name, email, password }),
+    });
+    return apiJson(res);
+  },
+
+  async login({ email, password }) {
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    return apiJson(res);
+  },
+
+  async me() {
+    const res = await authFetch(`${API_BASE}/auth/me`);
+    return apiJson(res);
+  },
+
+  async resumePayment() {
+    const res = await authFetch(`${API_BASE}/paystack/resume`, { method: "POST" });
     return apiJson(res);
   },
 };
@@ -260,7 +297,42 @@ function renderNav() {
   document.getElementById("mobile-title").textContent = NAV_ITEMS.find(i => i.id === currentView).label;
 }
 
+function hideNav() {
+  document.getElementById("sidebar-aside")?.classList.add("!hidden");
+  document.getElementById("bottom-nav")?.classList.add("!hidden");
+  document.getElementById("mobile-header")?.classList.add("!hidden");
+}
+
+function showNav() {
+  document.getElementById("sidebar-aside")?.classList.remove("!hidden");
+  document.getElementById("bottom-nav")?.classList.remove("!hidden");
+  document.getElementById("mobile-header")?.classList.remove("!hidden");
+}
+
 async function render() {
+  // Sample mode has no Worker to log into, so it skips straight to the app.
+  if (!USE_SAMPLE_DATA) {
+    if (!authToken) {
+      hideNav();
+      document.getElementById("app").innerHTML = await ViewAuth();
+      return;
+    }
+    if (!currentShop) {
+      try {
+        currentShop = await Api.me();
+      } catch (err) {
+        logout();
+        return;
+      }
+    }
+    if (currentShop.subscription_status !== "active") {
+      hideNav();
+      document.getElementById("app").innerHTML = await ViewPaymentPending();
+      return;
+    }
+  }
+
+  showNav();
   renderNav();
   const app = document.getElementById("app");
   app.innerHTML = `<div class="py-16 text-center text-ink/40">Loading…</div>`;
@@ -273,6 +345,101 @@ async function render() {
   } catch (err) {
     app.innerHTML = `<div class="text-center py-16 text-danger">Something went wrong: ${err.message}</div>`;
   }
+}
+
+// ---------------- AUTH & BILLING VIEWS ----------------
+
+let authMode = "login"; // or "signup"
+
+async function ViewAuth() {
+  return `
+    <div class="max-w-sm mx-auto mt-10 md:mt-20">
+      <div class="text-center mb-6">
+        <div class="font-display text-3xl font-extrabold text-primary-dark">Duka</div>
+        <p class="text-sm text-ink/50 mt-1">Simple stock and sales, in your pocket.</p>
+      </div>
+      <div class="flex bg-black/5 rounded-full p-1 mb-5">
+        <button onclick="authMode='login'; render()" class="flex-1 py-2 rounded-full text-sm font-semibold ${authMode === "login" ? "bg-white shadow-sm" : "text-ink/50"}">Log in</button>
+        <button onclick="authMode='signup'; render()" class="flex-1 py-2 rounded-full text-sm font-semibold ${authMode === "signup" ? "bg-white shadow-sm" : "text-ink/50"}">Sign up</button>
+      </div>
+      <div class="card p-4 space-y-3">
+        ${authMode === "signup" ? `<input id="auth-shopname" placeholder="Shop name" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />` : ""}
+        <input id="auth-email" type="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+        <input id="auth-password" type="password" placeholder="Password" class="w-full border border-black/10 rounded-xl px-3 py-2.5"
+          onkeydown="if(event.key==='Enter') submitAuth()" />
+        <button onclick="submitAuth()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">
+          ${authMode === "signup" ? "Create account" : "Log in"}
+        </button>
+      </div>
+      <p class="text-xs text-ink/40 text-center mt-4">
+        ${authMode === "signup" ? "You'll be taken to Paystack to start your subscription." : "Forgot your password? Contact support."}
+      </p>
+    </div>
+  `;
+}
+
+async function submitAuth() {
+  const email = document.getElementById("auth-email").value.trim();
+  const password = document.getElementById("auth-password").value;
+  if (!email || !password) { toast("Email and password are required"); return; }
+
+  try {
+    if (authMode === "signup") {
+      const shop_name = document.getElementById("auth-shopname").value.trim();
+      if (!shop_name) { toast("Shop name is required"); return; }
+      const result = await Api.signup({ shop_name, email, password });
+      authToken = result.token;
+      localStorage.setItem("duka_token", authToken);
+      if (result.authorization_url) {
+        window.location.href = result.authorization_url;
+        return;
+      }
+      toast(result.error || "Account created, but payment could not start. Try again from the app.");
+      currentShop = null;
+      render();
+    } else {
+      const result = await Api.login({ email, password });
+      authToken = result.token;
+      localStorage.setItem("duka_token", authToken);
+      currentShop = null;
+      render();
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function ViewPaymentPending() {
+  const status = currentShop?.subscription_status;
+  const message = status === "past_due"
+    ? "Your last payment didn't go through. Renew to keep using Duka."
+    : status === "canceled"
+    ? "Your subscription was canceled. Resubscribe to keep using Duka."
+    : "Complete your payment to start using Duka.";
+  return `
+    <div class="max-w-sm mx-auto mt-16 text-center">
+      <div class="text-4xl mb-3">⏳</div>
+      <h1 class="font-display text-xl font-extrabold mb-2">Almost there</h1>
+      <p class="text-sm text-ink/50 mb-5">${message}</p>
+      <button onclick="resumePaymentFlow()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mb-3">Continue to payment</button>
+      <button onclick="refreshSession()" class="w-full border border-black/10 py-2.5 rounded-xl font-semibold mb-3">I already paid, refresh</button>
+      <button onclick="logout()" class="text-xs text-ink/40 underline">Log out</button>
+    </div>
+  `;
+}
+
+async function resumePaymentFlow() {
+  try {
+    const result = await Api.resumePayment();
+    window.location.href = result.authorization_url;
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function refreshSession() {
+  currentShop = null;
+  render();
 }
 
 // ---------------- DASHBOARD VIEW ----------------
@@ -735,6 +902,7 @@ async function ViewSettings() {
         <input id="set-threshold" type="number" value="${s.default_low_stock_threshold ?? 5}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
       </div>
       <button onclick="saveSettings()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-2">Save Settings</button>
+      ${!USE_SAMPLE_DATA ? `<button onclick="logout()" class="w-full text-danger font-semibold py-2.5 rounded-xl border border-danger/20 mt-2">Log out</button>` : ""}
     </div>
   `;
 }
