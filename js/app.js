@@ -2,6 +2,10 @@ const API_BASE = "https://duka-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = false;
 
 const CURRENCY = "₦";
+
+// ---------------- AUTH STATE ----------------
+// Duka is multi tenant: every shop owner logs in, and every API call
+// below carries their token so the Worker knows whose data to touch.
 let authToken = localStorage.getItem("duka_token") || null;
 let currentShop = null; // { shop_name, email, subscription_status }
 
@@ -21,6 +25,10 @@ function logout() {
 function formatMoney(n) {
   return CURRENCY + Number(n || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 });
 }
+
+// Resizes and compresses an uploaded image before it's stored as a
+// base64 string. Keeps rows in D1 small instead of needing separate
+// file storage, which this project's stack intentionally avoids.
 function compressImageToDataUrl(file, maxW = 400, maxH = 400, quality = 0.7) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -254,6 +262,14 @@ const Api = {
 
   async resumePayment() {
     const res = await authFetch(`${API_BASE}/paystack/resume`, { method: "POST" });
+    return apiJson(res);
+  },
+
+  async changePassword(current_password, new_password) {
+    const res = await authFetch(`${API_BASE}/auth/change-password`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_password, new_password }),
+    });
     return apiJson(res);
   },
 };
@@ -902,9 +918,39 @@ async function ViewSettings() {
         <input id="set-threshold" type="number" value="${s.default_low_stock_threshold ?? 5}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
       </div>
       <button onclick="saveSettings()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-2">Save Settings</button>
-      ${!USE_SAMPLE_DATA ? `<button onclick="logout()" class="w-full text-danger font-semibold py-2.5 rounded-xl border border-danger/20 mt-2">Log out</button>` : ""}
     </div>
+
+    ${!USE_SAMPLE_DATA ? `
+    <div class="card p-4 space-y-3 mt-4">
+      <h2 class="font-display font-bold">Change password</h2>
+      <input id="cp-current" type="password" placeholder="Current password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+      <input id="cp-new" type="password" placeholder="New password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+      <input id="cp-confirm" type="password" placeholder="Confirm new password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+      <button onclick="submitChangePassword()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update Password</button>
+    </div>
+    <button onclick="logout()" class="w-full text-danger font-semibold py-2.5 rounded-xl border border-danger/20 mt-4">Log out</button>
+    ` : ""}
   `;
+}
+
+async function submitChangePassword() {
+  const current = document.getElementById("cp-current").value;
+  const next = document.getElementById("cp-new").value;
+  const confirm = document.getElementById("cp-confirm").value;
+
+  if (!current || !next) { toast("Fill in both password fields"); return; }
+  if (next.length < 6) { toast("New password must be at least 6 characters"); return; }
+  if (next !== confirm) { toast("New passwords don't match"); return; }
+
+  try {
+    await Api.changePassword(current, next);
+    toast("Password updated");
+    document.getElementById("cp-current").value = "";
+    document.getElementById("cp-new").value = "";
+    document.getElementById("cp-confirm").value = "";
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 let pendingLogoDataUrl = null;
