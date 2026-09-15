@@ -1,4 +1,4 @@
-const API_BASE = "https://duka-shop-manager.emezch93.workers.dev";
+const API_BASE = "https://duka-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = true;
 
 const CURRENCY = "₦";
