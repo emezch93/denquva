@@ -1,14 +1,4 @@
-// ============================================================
-// Duka — Shop Manager
-// This is the brain of the app. It decides what to show on
-// screen and talks to the Worker API (or sample data while
-// you are still building).
-// ============================================================
-
-// STEP 1: point this at your deployed Worker once it exists.
-// Until then, USE_SAMPLE_DATA keeps everything working locally
-// so you can see and test the interface.
-const API_BASE = "https://YOUR-WORKER-NAME.YOUR-SUBDOMAIN.workers.dev";
+const API_BASE = "https://duka-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = true;
 
 const CURRENCY = "₦";
