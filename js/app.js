@@ -7,6 +7,33 @@ function formatMoney(n) {
   return CURRENCY + Number(n || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 });
 }
 
+// Resizes and compresses an uploaded image before it's stored as a
+// base64 string. Keeps rows in D1 small instead of needing separate
+// file storage, which this project's stack intentionally avoids.
+function compressImageToDataUrl(file, maxW = 400, maxH = 400, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      img.onload = () => {
+        let { width, height } = img;
+        const ratio = Math.min(maxW / width, maxH / height, 1);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 // ---------------- SAMPLE DATA (clearly labeled, replaced by real data later) ----------------
 let sampleProducts = [
   { id: 1, name: "Coca Cola", description: "50cl Coca Cola soft drink", category: "Drinks", sku: "COKE50", selling_price: 700, cost_price: 500, quantity: 31, low_stock_threshold: 10 },
@@ -19,6 +46,13 @@ let sampleSales = [
 ];
 let nextProductId = 5;
 let nextSaleId = 2;
+let sampleSettings = {
+  business_name: "My Shop",
+  business_description: "",
+  currency_symbol: "₦",
+  default_low_stock_threshold: 5,
+  logo_url: "",
+};
 
 // ---------------- API LAYER ----------------
 // Every screen calls these functions. Swap USE_SAMPLE_DATA to
@@ -158,6 +192,25 @@ const Api = {
     });
     return res.json();
   },
+
+  async getSettings() {
+    if (USE_SAMPLE_DATA) {
+      return sampleSettings;
+    }
+    const res = await fetch(`${API_BASE}/api/settings`);
+    return res.json();
+  },
+
+  async updateSettings(data) {
+    if (USE_SAMPLE_DATA) {
+      Object.assign(sampleSettings, data);
+      return sampleSettings;
+    }
+    const res = await fetch(`${API_BASE}/api/settings`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+    });
+    return res.json();
+  },
 };
 
 // ---------------- APP STATE & ROUTING ----------------
@@ -292,10 +345,15 @@ function productCard(p) {
   const isLow = p.quantity <= p.low_stock_threshold;
   return `
     <div class="card p-4 flex flex-col gap-2">
-      <div class="flex items-start justify-between">
-        <div>
-          <div class="font-display font-bold">${p.name}</div>
-          <div class="text-xs text-ink/45">${p.category || "Uncategorized"}</div>
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex items-center gap-3">
+          ${p.image_url
+            ? `<div class="w-12 h-12 rounded-xl bg-cover bg-center flex-shrink-0" style="background-image:url('${p.image_url}')"></div>`
+            : `<div class="w-12 h-12 rounded-xl bg-black/5 flex items-center justify-center text-lg flex-shrink-0">📦</div>`}
+          <div>
+            <div class="font-display font-bold">${p.name}</div>
+            <div class="text-xs text-ink/45">${p.category || "Uncategorized"}</div>
+          </div>
         </div>
         <div class="text-right">
           <div class="font-semibold">${formatMoney(p.selling_price)}</div>
@@ -315,10 +373,19 @@ function productCard(p) {
 
 function openProductForm(id) {
   const product = id ? sampleProducts.find(p => p.id === id) : null;
+  pendingProductImage = product?.image_url || null;
   const modal = document.getElementById("product-modal");
   document.getElementById("product-modal-body").innerHTML = `
     <h2 class="font-display text-xl font-extrabold mb-4">${product ? "Edit product" : "Add product"}</h2>
     <div class="space-y-3">
+      <div class="flex items-center gap-3">
+        <div id="product-photo-preview" class="w-14 h-14 rounded-xl bg-black/5 bg-cover bg-center flex items-center justify-center text-lg flex-shrink-0"
+          style="${product?.image_url ? `background-image:url('${product.image_url}')` : ""}">${product?.image_url ? "" : "📦"}</div>
+        <label class="text-sm font-semibold text-primary cursor-pointer">
+          Add photo
+          <input type="file" accept="image/*" class="hidden" onchange="onProductPhotoSelected(event)" />
+        </label>
+      </div>
       <input id="pf-name" placeholder="Product name" value="${product?.name || ""}" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
       <div class="flex gap-2">
         <input id="pf-desc" placeholder="Description" value="${product?.description || ""}" class="flex-1 border border-black/10 rounded-xl px-3 py-2.5" />
@@ -346,6 +413,17 @@ function openProductForm(id) {
   modal.classList.remove("hidden");
 }
 
+let pendingProductImage = null;
+
+async function onProductPhotoSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  pendingProductImage = await compressImageToDataUrl(file, 400, 400);
+  const preview = document.getElementById("product-photo-preview");
+  preview.style.backgroundImage = `url('${pendingProductImage}')`;
+  preview.textContent = "";
+}
+
 async function generateAIDescription() {
   const name = document.getElementById("pf-name").value;
   const category = document.getElementById("pf-category").value;
@@ -366,10 +444,12 @@ async function saveProduct(id) {
   };
   if (!data.name) { toast("Product name is required"); return; }
   if (!id) data.quantity = parseInt(document.getElementById("pf-qty").value) || 0;
+  if (pendingProductImage) data.image_url = pendingProductImage;
 
   if (id) await Api.updateProduct(id, data);
   else await Api.createProduct(data);
 
+  pendingProductImage = null;
   closeModal("product-modal");
   toast(id ? "Product updated" : "Product added");
   render();
@@ -503,19 +583,21 @@ async function ViewSales() {
 // ---------------- AI ASSISTANT VIEW ----------------
 
 let aiMessages = [
-  { role: "assistant", text: "Ask me things like \"what did I sell today\" or \"which products are running low\"." },
+  { role: "assistant", text: "Ask me things like \"what did I sell today\" or \"which products are running low\". You can type or tap the mic to speak." },
 ];
 
 async function ViewAI() {
-  const bubbles = aiMessages.map(m => `
+  const bubbles = aiMessages.map((m, i) => `
     <div class="flex ${m.role === "user" ? "justify-end" : "justify-start"} mb-3">
-      <div class="max-w-[80%] px-4 py-2.5 rounded-2xl text-sm ${m.role === "user" ? "bg-primary text-white" : "bg-surface border border-black/10"}">${m.text}</div>
+      <div data-msg-index="${i}" class="max-w-[80%] px-4 py-2.5 rounded-2xl text-sm ${m.role === "user" ? "bg-primary text-white" : "bg-surface border border-black/10"}">${m.text}</div>
     </div>`).join("");
 
   return `
     <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">AI Assistant</h1>
     <div class="card p-4 mb-3 min-h-[50vh] flex flex-col justify-end" id="ai-thread">${bubbles}</div>
     <div class="flex gap-2">
+      <button id="mic-btn" onclick="toggleVoiceInput()" title="Speak your question"
+        class="w-11 h-11 rounded-full bg-surface border border-black/10 flex items-center justify-center flex-shrink-0 text-lg">🎤</button>
       <input id="ai-input" placeholder="Ask about your business" class="flex-1 border border-black/10 rounded-full px-4 py-2.5"
         onkeydown="if(event.key==='Enter') sendAIMessage()" />
       <button onclick="sendAIMessage()" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full">Ask</button>
@@ -529,34 +611,132 @@ async function sendAIMessage() {
   if (!question) return;
   aiMessages.push({ role: "user", text: question });
   input.value = "";
+  const replyIndex = aiMessages.length;
+  aiMessages.push({ role: "assistant", text: "···" });
   render();
-  const { answer } = await Api.askAI(question);
-  aiMessages.push({ role: "assistant", text: answer });
-  render();
+
+  let answer;
+  try {
+    const result = await Api.askAI(question);
+    answer = result.answer || "Sorry, I could not get an answer just now.";
+  } catch (err) {
+    answer = "Sorry, I could not reach the AI assistant. Check your connection and try again.";
+  }
+  await typeOutMessage(replyIndex, answer);
+}
+
+// Reveals the AI's reply a few characters at a time so it reads like
+// it is being typed live, instead of the full answer appearing at once.
+function typeOutMessage(index, fullText) {
+  return new Promise((resolve) => {
+    const bubble = document.querySelector(`[data-msg-index="${index}"]`);
+    let shown = 0;
+    const timer = setInterval(() => {
+      shown += 2;
+      const text = fullText.slice(0, shown);
+      aiMessages[index].text = text;
+      if (bubble) bubble.textContent = text;
+      if (shown >= fullText.length) {
+        clearInterval(timer);
+        aiMessages[index].text = fullText;
+        resolve();
+      }
+    }, 15);
+  });
+}
+
+// Uses the browser's built in speech recognition, no extra AI voice
+// service needed. Falls back gracefully where it is not supported.
+let activeRecognition = null;
+
+function toggleVoiceInput() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    toast("Voice input is not supported on this browser");
+    return;
+  }
+  const micBtn = document.getElementById("mic-btn");
+  if (activeRecognition) {
+    activeRecognition.stop();
+    return;
+  }
+  activeRecognition = new SpeechRecognition();
+  activeRecognition.lang = "en-NG";
+  activeRecognition.interimResults = false;
+  activeRecognition.maxAlternatives = 1;
+  micBtn.classList.add("mic-active");
+  micBtn.textContent = "●";
+
+  activeRecognition.onresult = (event) => {
+    document.getElementById("ai-input").value = event.results[0][0].transcript;
+  };
+  activeRecognition.onerror = () => toast("Could not hear that, try again");
+  activeRecognition.onend = () => {
+    micBtn.classList.remove("mic-active");
+    micBtn.textContent = "🎤";
+    activeRecognition = null;
+  };
+  activeRecognition.start();
 }
 
 // ---------------- SETTINGS VIEW ----------------
 
 async function ViewSettings() {
+  const s = await Api.getSettings();
   return `
     <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">Settings</h1>
     <div class="card p-4 space-y-3">
-      <div>
-        <label class="text-xs text-ink/50">Business name</label>
-        <input value="My Shop" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+      <div class="flex items-center gap-3">
+        <div id="logo-preview" class="w-14 h-14 rounded-full bg-black/5 bg-cover bg-center flex items-center justify-center text-xl overflow-hidden"
+          style="${s.logo_url ? `background-image:url('${s.logo_url}')` : ""}">${s.logo_url ? "" : "🏪"}</div>
+        <label class="text-sm font-semibold text-primary cursor-pointer">
+          Change logo
+          <input type="file" accept="image/*" class="hidden" onchange="onLogoSelected(event)" />
+        </label>
       </div>
       <div>
-        <label class="text-xs text-ink/50">Currency</label>
-        <input value="₦ Naira" disabled class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1 bg-black/5" />
+        <label class="text-xs text-ink/50">Business name</label>
+        <input id="set-name" value="${s.business_name || ""}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+      </div>
+      <div>
+        <label class="text-xs text-ink/50">Business description</label>
+        <input id="set-desc" value="${s.business_description || ""}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+      </div>
+      <div>
+        <label class="text-xs text-ink/50">Currency symbol</label>
+        <input id="set-currency" value="${s.currency_symbol || "₦"}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
       </div>
       <div>
         <label class="text-xs text-ink/50">Default low stock alert</label>
-        <input type="number" value="5" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+        <input id="set-threshold" type="number" value="${s.default_low_stock_threshold ?? 5}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
       </div>
-      <button onclick="toast('Settings saved (sample mode)')" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-2">Save Settings</button>
+      <button onclick="saveSettings()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-2">Save Settings</button>
     </div>
-    <p class="text-xs text-ink/40 mt-3">Full settings persistence connects once the Worker's business_settings table is wired in Phase 4.</p>
   `;
+}
+
+let pendingLogoDataUrl = null;
+
+async function onLogoSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  pendingLogoDataUrl = await compressImageToDataUrl(file, 200, 200);
+  document.getElementById("logo-preview").style.backgroundImage = `url('${pendingLogoDataUrl}')`;
+  document.getElementById("logo-preview").textContent = "";
+}
+
+async function saveSettings() {
+  const data = {
+    business_name: document.getElementById("set-name").value.trim() || "My Shop",
+    business_description: document.getElementById("set-desc").value.trim(),
+    currency_symbol: document.getElementById("set-currency").value.trim() || "₦",
+    default_low_stock_threshold: parseInt(document.getElementById("set-threshold").value) || 5,
+  };
+  if (pendingLogoDataUrl) data.logo_url = pendingLogoDataUrl;
+  await Api.updateSettings(data);
+  pendingLogoDataUrl = null;
+  toast("Settings saved");
+  render();
 }
 
 // ---------------- INIT ----------------
