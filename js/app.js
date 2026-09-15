@@ -1,5 +1,5 @@
 const API_BASE = "https://duka-api.emezch93.workers.dev";
-const USE_SAMPLE_DATA = false;
+const USE_SAMPLE_DATA = true;
 
 const CURRENCY = "₦";
 
@@ -54,6 +54,16 @@ let sampleSettings = {
   logo_url: "",
 };
 
+// Every real API call goes through this so a failed request always
+// throws, instead of the UI quietly treating an error response as
+// if it had succeeded.
+async function apiJson(res) {
+  let data;
+  try { data = await res.json(); } catch { data = {}; }
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
 // ---------------- API LAYER ----------------
 // Every screen calls these functions. Swap USE_SAMPLE_DATA to
 // false once your Worker is live, and nothing else needs to change.
@@ -67,7 +77,7 @@ const Api = {
       );
     }
     const res = await fetch(`${API_BASE}/api/products?search=${encodeURIComponent(search)}`);
-    return res.json();
+    return apiJson(res);
   },
 
   async createProduct(data) {
@@ -79,7 +89,7 @@ const Api = {
     const res = await fetch(`${API_BASE}/api/products`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
     });
-    return res.json();
+    return apiJson(res);
   },
 
   async updateProduct(id, data) {
@@ -91,7 +101,7 @@ const Api = {
     const res = await fetch(`${API_BASE}/api/products/${id}`, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
     });
-    return res.json();
+    return apiJson(res);
   },
 
   async deleteProduct(id) {
@@ -100,7 +110,7 @@ const Api = {
       return { success: true };
     }
     const res = await fetch(`${API_BASE}/api/products/${id}`, { method: "DELETE" });
-    return res.json();
+    return apiJson(res);
   },
 
   async sell(productId, quantity) {
@@ -122,9 +132,7 @@ const Api = {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ product_id: productId, quantity }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Could not record sale");
-    return data;
+    return apiJson(res);
   },
 
   async addStock(productId, quantity, costPerUnit, supplier, note) {
@@ -137,7 +145,7 @@ const Api = {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ product_id: productId, quantity, cost_per_unit: costPerUnit, supplier, note }),
     });
-    return res.json();
+    return apiJson(res);
   },
 
   async getSales(range = "") {
@@ -153,7 +161,7 @@ const Api = {
       });
     }
     const res = await fetch(`${API_BASE}/api/sales?range=${range}`);
-    return res.json();
+    return apiJson(res);
   },
 
   async getDashboard() {
@@ -170,7 +178,7 @@ const Api = {
       };
     }
     const res = await fetch(`${API_BASE}/api/dashboard`);
-    return res.json();
+    return apiJson(res);
   },
 
   async askAI(question) {
@@ -180,7 +188,7 @@ const Api = {
     const res = await fetch(`${API_BASE}/api/ai`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }),
     });
-    return res.json();
+    return apiJson(res);
   },
 
   async generateDescription(name, category, extra) {
@@ -190,7 +198,7 @@ const Api = {
     const res = await fetch(`${API_BASE}/api/ai/product-description`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, category, extra }),
     });
-    return res.json();
+    return apiJson(res);
   },
 
   async getSettings() {
@@ -198,7 +206,7 @@ const Api = {
       return sampleSettings;
     }
     const res = await fetch(`${API_BASE}/api/settings`);
-    return res.json();
+    return apiJson(res);
   },
 
   async updateSettings(data) {
@@ -209,7 +217,7 @@ const Api = {
     const res = await fetch(`${API_BASE}/api/settings`, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
     });
-    return res.json();
+    return apiJson(res);
   },
 };
 
@@ -418,10 +426,14 @@ let pendingProductImage = null;
 async function onProductPhotoSelected(event) {
   const file = event.target.files[0];
   if (!file) return;
-  pendingProductImage = await compressImageToDataUrl(file, 400, 400);
-  const preview = document.getElementById("product-photo-preview");
-  preview.style.backgroundImage = `url('${pendingProductImage}')`;
-  preview.textContent = "";
+  try {
+    pendingProductImage = await compressImageToDataUrl(file, 400, 400);
+    const preview = document.getElementById("product-photo-preview");
+    preview.style.backgroundImage = `url('${pendingProductImage}')`;
+    preview.textContent = "";
+  } catch (err) {
+    toast("Could not read that image, try a different file");
+  }
 }
 
 async function generateAIDescription() {
@@ -446,20 +458,28 @@ async function saveProduct(id) {
   if (!id) data.quantity = parseInt(document.getElementById("pf-qty").value) || 0;
   if (pendingProductImage) data.image_url = pendingProductImage;
 
-  if (id) await Api.updateProduct(id, data);
-  else await Api.createProduct(data);
+  try {
+    if (id) await Api.updateProduct(id, data);
+    else await Api.createProduct(data);
 
-  pendingProductImage = null;
-  closeModal("product-modal");
-  toast(id ? "Product updated" : "Product added");
-  render();
+    pendingProductImage = null;
+    closeModal("product-modal");
+    toast(id ? "Product updated" : "Product added");
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 async function confirmDeleteProduct(id) {
   if (!confirm("Delete this product? This cannot be undone.")) return;
-  await Api.deleteProduct(id);
-  toast("Product deleted");
-  render();
+  try {
+    await Api.deleteProduct(id);
+    toast("Product deleted");
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 // ---------------- SELL MODAL ----------------
@@ -531,10 +551,14 @@ async function confirmAddStock(productId) {
   if (!qty || qty <= 0) { toast("Enter a valid quantity"); return; }
   const cost = parseFloat(document.getElementById("as-cost").value) || 0;
   const supplier = document.getElementById("as-supplier").value.trim();
-  const result = await Api.addStock(productId, qty, cost, supplier, "");
-  closeModal("stock-modal");
-  toast(`Stock updated. New stock: ${result.new_quantity}`);
-  render();
+  try {
+    const result = await Api.addStock(productId, qty, cost, supplier, "");
+    closeModal("stock-modal");
+    toast(`Stock updated. New stock: ${result.new_quantity}`);
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 function closeModal(id) {
@@ -720,9 +744,13 @@ let pendingLogoDataUrl = null;
 async function onLogoSelected(event) {
   const file = event.target.files[0];
   if (!file) return;
-  pendingLogoDataUrl = await compressImageToDataUrl(file, 200, 200);
-  document.getElementById("logo-preview").style.backgroundImage = `url('${pendingLogoDataUrl}')`;
-  document.getElementById("logo-preview").textContent = "";
+  try {
+    pendingLogoDataUrl = await compressImageToDataUrl(file, 200, 200);
+    document.getElementById("logo-preview").style.backgroundImage = `url('${pendingLogoDataUrl}')`;
+    document.getElementById("logo-preview").textContent = "";
+  } catch (err) {
+    toast("Could not read that image, try a different file");
+  }
 }
 
 async function saveSettings() {
@@ -733,10 +761,14 @@ async function saveSettings() {
     default_low_stock_threshold: parseInt(document.getElementById("set-threshold").value) || 5,
   };
   if (pendingLogoDataUrl) data.logo_url = pendingLogoDataUrl;
-  await Api.updateSettings(data);
-  pendingLogoDataUrl = null;
-  toast("Settings saved");
-  render();
+  try {
+    await Api.updateSettings(data);
+    pendingLogoDataUrl = null;
+    toast("Settings saved");
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 // ---------------- INIT ----------------
