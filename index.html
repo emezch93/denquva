@@ -35,14 +35,14 @@
 <body class="bg-paper text-ink font-body antialiased min-h-screen pb-20 md:pb-0 md:pl-64">
 
   <!-- Desktop sidebar -->
-  <aside class="hidden md:flex md:flex-col md:fixed md:inset-y-0 md:left-0 md:w-64 bg-primary-dark text-white px-5 py-6">
+  <aside id="sidebar-aside" class="hidden md:flex md:flex-col md:fixed md:inset-y-0 md:left-0 md:w-64 bg-primary-dark text-white px-5 py-6">
     <div class="font-display text-2xl font-extrabold tracking-tight mb-8">Duka</div>
     <nav class="flex flex-col gap-1" id="sidebar-nav"></nav>
     <div class="mt-auto text-xs text-white/60 pt-6">Simple stock and sales, in your pocket.</div>
   </aside>
 
   <!-- Top bar (mobile) -->
-  <header class="md:hidden sticky top-0 z-30 bg-primary-dark text-white px-4 py-3 flex items-center justify-between">
+  <header id="mobile-header" class="md:hidden sticky top-0 z-30 bg-primary-dark text-white px-4 py-3 flex items-center justify-between">
     <span class="font-display text-lg font-extrabold" id="mobile-title">Dashboard</span>
     <span id="offline-pill" class="hidden text-xs bg-white/15 rounded-full px-2 py-1">Offline</span>
   </header>
