@@ -276,6 +276,17 @@ const Api = {
     });
     return apiJson(res);
   },
+
+  async transcribeAudio(audio_base64, mime_type) {
+    if (USE_SAMPLE_DATA) {
+      return { text: "" };
+    }
+    const res = await authFetch(`${API_BASE}/api/ai/transcribe`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audio_base64, mime_type }),
+    });
+    return apiJson(res);
+  },
 };
 
 // ---------------- APP STATE & ROUTING ----------------
@@ -859,8 +870,15 @@ async function ViewAI() {
     <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">AI Assistant</h1>
     <div class="card p-4 mb-3 min-h-[50vh] flex flex-col justify-end" id="ai-thread">${bubbles}</div>
     <div class="flex gap-2">
-      <button id="mic-btn" onclick="toggleVoiceInput()" title="Speak your question"
-        class="w-11 h-11 rounded-full bg-surface border border-black/10 flex items-center justify-center flex-shrink-0 text-lg">🎤</button>
+      <button id="mic-btn" onclick="toggleVoiceInput()" title="Record a voice question"
+        class="w-11 h-11 rounded-full bg-surface border border-black/10 flex items-center justify-center flex-shrink-0">
+        <svg id="mic-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+          <line x1="12" y1="19" x2="12" y2="23"></line>
+          <line x1="8" y1="23" x2="16" y2="23"></line>
+        </svg>
+      </button>
       <input id="ai-input" placeholder="Ask about your business" class="flex-1 border border-black/10 rounded-full px-4 py-2.5"
         onkeydown="if(event.key==='Enter') sendAIMessage()" />
       <button onclick="sendAIMessage()" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full">Ask</button>
@@ -908,38 +926,90 @@ function typeOutMessage(index, fullText) {
   });
 }
 
-// Uses the browser's built in speech recognition, no extra AI voice
-// service needed. Falls back gracefully where it is not supported.
-let activeRecognition = null;
+// Records real audio and sends it to Gemini to transcribe, an actual
+// AI feature rather than the browser's own built in speech engine.
+// Falls back gracefully where microphone access isn't available.
+let mediaRecorder = null;
+let recordedChunks = [];
 
-function toggleVoiceInput() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    toast("Voice input is not supported on this browser");
+async function toggleVoiceInput() {
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    toast("Voice recording is not supported on this browser");
     return;
   }
+
   const micBtn = document.getElementById("mic-btn");
-  if (activeRecognition) {
-    activeRecognition.stop();
+
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    mediaRecorder.stop();
     return;
   }
-  activeRecognition = new SpeechRecognition();
-  activeRecognition.lang = "en-NG";
-  activeRecognition.interimResults = false;
-  activeRecognition.maxAlternatives = 1;
-  micBtn.classList.add("mic-active");
-  micBtn.textContent = "●";
 
-  activeRecognition.onresult = (event) => {
-    document.getElementById("ai-input").value = event.results[0][0].transcript;
-  };
-  activeRecognition.onerror = () => toast("Could not hear that, try again");
-  activeRecognition.onend = () => {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    toast("Microphone access was blocked or unavailable");
+    return;
+  }
+
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+  const mimeType = candidates.find((t) => MediaRecorder.isTypeSupported(t)) || "";
+
+  mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  recordedChunks = [];
+
+  mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
+
+  mediaRecorder.onstop = async () => {
+    stream.getTracks().forEach((track) => track.stop());
     micBtn.classList.remove("mic-active");
-    micBtn.textContent = "🎤";
-    activeRecognition = null;
+    setMicIcon("idle");
+
+    const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || mimeType || "audio/webm" });
+    if (blob.size === 0) { mediaRecorder = null; return; }
+
+    setMicIcon("loading");
+    try {
+      const base64 = await blobToBase64(blob);
+      const { text } = await Api.transcribeAudio(base64, blob.type);
+      if (text) document.getElementById("ai-input").value = text;
+      else toast("Didn't catch that, try again");
+    } catch (err) {
+      toast(err.message || "Could not transcribe that recording");
+    }
+    setMicIcon("idle");
+    mediaRecorder = null;
   };
-  activeRecognition.start();
+
+  mediaRecorder.start();
+  micBtn.classList.add("mic-active");
+  setMicIcon("recording");
+}
+
+function setMicIcon(state) {
+  const icon = document.getElementById("mic-icon");
+  if (!icon) return;
+  if (state === "loading") {
+    icon.innerHTML = `<circle cx="12" cy="12" r="3"><animate attributeName="opacity" values="1;0.2;1" dur="1s" repeatCount="indefinite" /></circle>`;
+  } else if (state === "recording") {
+    icon.innerHTML = `<circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"></circle>`;
+  } else {
+    icon.innerHTML = `
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+      <line x1="12" y1="19" x2="12" y2="23"></line>
+      <line x1="8" y1="23" x2="16" y2="23"></line>`;
+  }
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 // ---------------- SETTINGS VIEW ----------------
