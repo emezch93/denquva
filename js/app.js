@@ -1,5 +1,5 @@
 
-const API_BASE = "https://YOUR-WORKER-NAME.YOUR-SUBDOMAIN.workers.dev";
+const API_BASE = "https://duka-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = true;
 
 const CURRENCY = "₦";
