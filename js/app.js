@@ -1,5 +1,15 @@
-const API_BASE = "https://duka-api.emezch93.workers.dev";
-const USE_SAMPLE_DATA = false;
+// ============================================================
+// Duka — Shop Manager
+// This is the brain of the app. It decides what to show on
+// screen and talks to the Worker API (or sample data while
+// you are still building).
+// ============================================================
+
+// STEP 1: point this at your deployed Worker once it exists.
+// Until then, USE_SAMPLE_DATA keeps everything working locally
+// so you can see and test the interface.
+const API_BASE = "https://YOUR-WORKER-NAME.YOUR-SUBDOMAIN.workers.dev";
+const USE_SAMPLE_DATA = true;
 
 const CURRENCY = "₦";
 
@@ -79,7 +89,11 @@ let sampleSettings = {
 async function apiJson(res) {
   let data;
   try { data = await res.json(); } catch { data = {}; }
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -277,11 +291,11 @@ const Api = {
 // ---------------- APP STATE & ROUTING ----------------
 
 const NAV_ITEMS = [
-  { id: "dashboard", label: "Dashboard", icon: "📊" },
-  { id: "products", label: "Products", icon: "🛒" },
-  { id: "sales", label: "Sales", icon: "🧾" },
-  { id: "ai", label: "AI Assistant", icon: "✨" },
-  { id: "settings", label: "Settings", icon: "⚙️" },
+  { id: "dashboard", label: "Dashboard", icon: "📊", hint: "Today's sales, revenue, and low stock at a glance" },
+  { id: "products", label: "Products", icon: "🛒", hint: "Add, edit, sell, and restock your products" },
+  { id: "sales", label: "Sales", icon: "🧾", hint: "Your sales history and estimated profit" },
+  { id: "ai", label: "AI Assistant", icon: "✨", hint: "Ask questions about your business, by typing or speaking" },
+  { id: "settings", label: "Settings", icon: "⚙️", hint: "Shop name, logo, currency, password, and subscription" },
 ];
 
 let currentView = "dashboard";
@@ -303,11 +317,11 @@ function renderNav() {
   const sidebar = document.getElementById("sidebar-nav");
   const bottom = document.getElementById("bottom-nav");
   sidebar.innerHTML = NAV_ITEMS.map(item => `
-    <div class="nav-item ${currentView === item.id ? "active" : ""}" onclick="setView('${item.id}')">
+    <div class="nav-item ${currentView === item.id ? "active" : ""}" onclick="setView('${item.id}')" title="${item.hint}">
       <span>${item.icon}</span><span>${item.label}</span>
     </div>`).join("");
   bottom.innerHTML = NAV_ITEMS.map(item => `
-    <div class="bottom-nav-item ${currentView === item.id ? "active" : ""}" onclick="setView('${item.id}')">
+    <div class="bottom-nav-item ${currentView === item.id ? "active" : ""}" onclick="setView('${item.id}')" title="${item.hint}">
       <span class="text-lg">${item.icon}</span><span>${item.label}</span>
     </div>`).join("");
   document.getElementById("mobile-title").textContent = NAV_ITEMS.find(i => i.id === currentView).label;
@@ -325,6 +339,14 @@ function showNav() {
   document.getElementById("mobile-header")?.classList.remove("!hidden");
 }
 
+function isSessionUsable(shop) {
+  if (shop.subscription_status === "active") return true;
+  if (shop.subscription_status === "trial" && shop.trial_ends_at) {
+    return new Date(shop.trial_ends_at).getTime() > Date.now();
+  }
+  return false;
+}
+
 async function render() {
   // Sample mode has no Worker to log into, so it skips straight to the app.
   if (!USE_SAMPLE_DATA) {
@@ -337,11 +359,22 @@ async function render() {
       try {
         currentShop = await Api.me();
       } catch (err) {
-        logout();
+        if (err.status === 401) {
+          logout();
+        } else {
+          hideNav();
+          document.getElementById("app").innerHTML = `
+            <div class="max-w-sm mx-auto mt-16 text-center">
+              <div class="text-4xl mb-3">📡</div>
+              <h1 class="font-display text-xl font-extrabold mb-2">Can't reach Duka</h1>
+              <p class="text-sm text-ink/50 mb-5">Check your connection and try again. You're still logged in.</p>
+              <button onclick="render()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Retry</button>
+            </div>`;
+        }
         return;
       }
     }
-    if (currentShop.subscription_status !== "active") {
+    if (!isSessionUsable(currentShop)) {
       hideNav();
       document.getElementById("app").innerHTML = await ViewPaymentPending();
       return;
@@ -383,12 +416,12 @@ async function ViewAuth() {
         <input id="auth-email" type="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
         <input id="auth-password" type="password" placeholder="Password" class="w-full border border-black/10 rounded-xl px-3 py-2.5"
           onkeydown="if(event.key==='Enter') submitAuth()" />
-        <button onclick="submitAuth()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">
+        <button id="auth-submit-btn" onclick="submitAuth()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">
           ${authMode === "signup" ? "Create account" : "Log in"}
         </button>
       </div>
       <p class="text-xs text-ink/40 text-center mt-4">
-        ${authMode === "signup" ? "You'll be taken to Paystack to start your subscription." : "Forgot your password? Contact support."}
+        ${authMode === "signup" ? "Free for 7 days, no card needed to start." : "Forgot your password? Contact support."}
       </p>
     </div>
   `;
@@ -398,6 +431,12 @@ async function submitAuth() {
   const email = document.getElementById("auth-email").value.trim();
   const password = document.getElementById("auth-password").value;
   if (!email || !password) { toast("Email and password are required"); return; }
+
+  const btn = document.getElementById("auth-submit-btn");
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.classList.add("opacity-60");
+  btn.textContent = authMode === "signup" ? "Creating account…" : "Logging in…";
 
   try {
     if (authMode === "signup") {
@@ -410,7 +449,7 @@ async function submitAuth() {
         window.location.href = result.authorization_url;
         return;
       }
-      toast(result.error || "Account created, but payment could not start. Try again from the app.");
+      toast(result.error || "Account created, enjoy your free trial!");
       currentShop = null;
       render();
     } else {
@@ -422,20 +461,26 @@ async function submitAuth() {
     }
   } catch (err) {
     toast(err.message);
+    btn.disabled = false;
+    btn.classList.remove("opacity-60");
+    btn.textContent = originalLabel;
   }
 }
 
 async function ViewPaymentPending() {
   const status = currentShop?.subscription_status;
-  const message = status === "past_due"
+  const isTrialExpired = status === "trial";
+  const message = isTrialExpired
+    ? "Your 7 day free trial has ended. Subscribe to keep using Duka."
+    : status === "past_due"
     ? "Your last payment didn't go through. Renew to keep using Duka."
     : status === "canceled"
     ? "Your subscription was canceled. Resubscribe to keep using Duka."
     : "Complete your payment to start using Duka.";
   return `
     <div class="max-w-sm mx-auto mt-16 text-center">
-      <div class="text-4xl mb-3">⏳</div>
-      <h1 class="font-display text-xl font-extrabold mb-2">Almost there</h1>
+      <div class="text-4xl mb-3">${isTrialExpired ? "🎉" : "⏳"}</div>
+      <h1 class="font-display text-xl font-extrabold mb-2">${isTrialExpired ? "Trial complete" : "Almost there"}</h1>
       <p class="text-sm text-ink/50 mb-5">${message}</p>
       <button onclick="resumePaymentFlow()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mb-3">Continue to payment</button>
       <button onclick="refreshSession()" class="w-full border border-black/10 py-2.5 rounded-xl font-semibold mb-3">I already paid, refresh</button>
@@ -454,11 +499,31 @@ async function resumePaymentFlow() {
 }
 
 async function refreshSession() {
-  currentShop = null;
-  render();
+  try {
+    const updated = await Api.me();
+    currentShop = updated;
+    if (isSessionUsable(updated)) {
+      toast("Payment confirmed!");
+    } else {
+      toast("Still not showing as paid yet. This can take a minute after paying, try again shortly.");
+    }
+    render();
+  } catch (err) {
+    toast("Could not check your status. Check your connection and try again.");
+  }
 }
 
 // ---------------- DASHBOARD VIEW ----------------
+
+function trialBannerHtml() {
+  if (USE_SAMPLE_DATA || !currentShop || currentShop.subscription_status !== "trial" || !currentShop.trial_ends_at) return "";
+  const daysLeft = Math.max(0, Math.ceil((new Date(currentShop.trial_ends_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+  return `
+    <div class="bg-amber-light text-amber-dark text-sm font-semibold rounded-xl px-4 py-2.5 mb-4 flex items-center justify-between">
+      <span>${daysLeft} day${daysLeft === 1 ? "" : "s"} left in your free trial</span>
+      <button onclick="setView('settings')" class="underline">Subscribe</button>
+    </div>`;
+}
 
 async function ViewDashboard() {
   const d = await Api.getDashboard();
@@ -488,6 +553,7 @@ async function ViewDashboard() {
     : `<div class="text-sm text-ink/40 py-4 text-center">No sales recorded yet.</div>`;
 
   return `
+    ${trialBannerHtml()}
     <div class="flex items-center justify-between mb-5">
       <h1 class="font-display text-2xl font-extrabold hidden md:block">Dashboard</h1>
       <button onclick="setView('products')" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full text-sm">+ New Sale</button>
@@ -552,8 +618,8 @@ function productCard(p) {
         </div>
       </div>
       <div class="flex gap-2 mt-1">
-        <button onclick="openSellModal(${p.id})" class="flex-1 bg-primary text-white font-semibold py-2.5 rounded-xl text-sm">SELL</button>
-        <button onclick="openStockModal(${p.id})" class="flex-1 bg-amber-light text-amber-dark font-semibold py-2.5 rounded-xl text-sm">ADD STOCK</button>
+        <button onclick="openSellModal(${p.id})" title="Record a sale, reduces stock automatically" class="flex-1 bg-primary text-white font-semibold py-2.5 rounded-xl text-sm">SELL</button>
+        <button onclick="openStockModal(${p.id})" title="Restock this product and log the movement" class="flex-1 bg-amber-light text-amber-dark font-semibold py-2.5 rounded-xl text-sm">ADD STOCK</button>
       </div>
       <div class="flex gap-3 text-xs text-ink/45 pt-1">
         <button onclick="openProductForm(${p.id})" class="underline">Edit</button>
@@ -921,6 +987,13 @@ async function ViewSettings() {
     </div>
 
     ${!USE_SAMPLE_DATA ? `
+    ${currentShop?.subscription_status === "trial" ? `
+    <div class="card p-4 mt-4">
+      <h2 class="font-display font-bold mb-1">Subscription</h2>
+      <p class="text-sm text-ink/50 mb-3">You're on the free trial. Subscribe anytime to keep going past it.</p>
+      <button onclick="resumePaymentFlow()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Subscribe now</button>
+    </div>
+    ` : ""}
     <div class="card p-4 space-y-3 mt-4">
       <h2 class="font-display font-bold">Change password</h2>
       <input id="cp-current" type="password" placeholder="Current password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
