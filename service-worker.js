@@ -1,4 +1,4 @@
-const CACHE_NAME = "duka-shell-v9";
+const CACHE_NAME = "duka-shell-v3";
 const SHELL_FILES = [
   "./",
   "./index.html",
