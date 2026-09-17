@@ -1,7 +1,34 @@
 const API_BASE = "https://duka-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = false;
 
-const CURRENCY = "₦";
+// Every shop picks its own currency in Settings, this is the list they
+// choose from. Symbol and locale drive both the display symbol and the
+// number formatting (thousands separators etc).
+const CURRENCIES = {
+  NGN: { symbol: "₦", locale: "en-NG", name: "Nigerian Naira" },
+  USD: { symbol: "$", locale: "en-US", name: "US Dollar" },
+  GBP: { symbol: "£", locale: "en-GB", name: "British Pound" },
+  EUR: { symbol: "€", locale: "de-DE", name: "Euro" },
+  GHS: { symbol: "GH₵", locale: "en-GH", name: "Ghanaian Cedi" },
+  KES: { symbol: "KSh", locale: "en-KE", name: "Kenyan Shilling" },
+  ZAR: { symbol: "R", locale: "en-ZA", name: "South African Rand" },
+  INR: { symbol: "₹", locale: "en-IN", name: "Indian Rupee" },
+  XOF: { symbol: "CFA", locale: "fr-SN", name: "West African CFA Franc" },
+  EGP: { symbol: "E£", locale: "ar-EG", name: "Egyptian Pound" },
+  UGX: { symbol: "USh", locale: "en-UG", name: "Ugandan Shilling" },
+  TZS: { symbol: "TSh", locale: "en-TZ", name: "Tanzanian Shilling" },
+  CAD: { symbol: "CA$", locale: "en-CA", name: "Canadian Dollar" },
+  AUD: { symbol: "AU$", locale: "en-AU", name: "Australian Dollar" },
+  JPY: { symbol: "¥", locale: "ja-JP", name: "Japanese Yen" },
+  CNY: { symbol: "¥", locale: "zh-CN", name: "Chinese Yuan" },
+  BRL: { symbol: "R$", locale: "pt-BR", name: "Brazilian Real" },
+  MXN: { symbol: "MX$", locale: "es-MX", name: "Mexican Peso" },
+  AED: { symbol: "AED", locale: "ar-AE", name: "UAE Dirham" },
+  PHP: { symbol: "₱", locale: "en-PH", name: "Philippine Peso" },
+};
+
+// Loaded once per session from this shop's saved settings.
+let shopSettings = null;
 
 // ---------------- AUTH STATE ----------------
 // Duka is multi tenant: every shop owner logs in, and every API call
@@ -18,12 +45,15 @@ async function authFetch(url, options = {}) {
 function logout() {
   authToken = null;
   currentShop = null;
+  shopSettings = null;
   localStorage.removeItem("duka_token");
   render();
 }
 
 function formatMoney(n) {
-  return CURRENCY + Number(n || 0).toLocaleString("en-NG", { maximumFractionDigits: 0 });
+  const code = shopSettings?.currency_code || "NGN";
+  const currency = CURRENCIES[code] || CURRENCIES.NGN;
+  return currency.symbol + Number(n || 0).toLocaleString(currency.locale, { maximumFractionDigits: 0 });
 }
 
 // Resizes and compresses an uploaded image before it's stored as a
@@ -69,6 +99,7 @@ let sampleSettings = {
   business_name: "My Shop",
   business_description: "",
   currency_symbol: "₦",
+  currency_code: "NGN",
   default_low_stock_threshold: 5,
   logo_url: "",
 };
@@ -287,6 +318,22 @@ const Api = {
     });
     return apiJson(res);
   },
+
+  async requestPasswordReset(email) {
+    const res = await fetch(`${API_BASE}/auth/forgot-password`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    return apiJson(res);
+  },
+
+  async resetPassword(token, new_password) {
+    const res = await fetch(`${API_BASE}/auth/reset-password`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, new_password }),
+    });
+    return apiJson(res);
+  },
 };
 
 // ---------------- APP STATE & ROUTING ----------------
@@ -348,7 +395,33 @@ function isSessionUsable(shop) {
   return false;
 }
 
+// While a shop is on the free trial, quietly check every so often
+// whether they've actually subscribed, so the trial banner disappears
+// on its own instead of sticking around until the next full login.
+let lastTrialStatusCheck = 0;
+async function maybeRefreshTrialStatus() {
+  if (!currentShop || currentShop.subscription_status !== "trial") return;
+  const now = Date.now();
+  if (now - lastTrialStatusCheck < 60000) return;
+  lastTrialStatusCheck = now;
+  try {
+    const updated = await Api.me();
+    const wasTrial = currentShop.subscription_status === "trial";
+    currentShop = updated;
+    if (wasTrial && updated.subscription_status !== "trial") render();
+  } catch {
+    // Non critical, just try again next time.
+  }
+}
+
 async function render() {
+  const resetToken = !USE_SAMPLE_DATA ? new URLSearchParams(window.location.search).get("reset_token") : null;
+  if (resetToken) {
+    hideNav();
+    document.getElementById("app").innerHTML = ViewResetPassword(resetToken);
+    return;
+  }
+
   // Sample mode has no Worker to log into, so it skips straight to the app.
   if (!USE_SAMPLE_DATA) {
     if (!authToken) {
@@ -380,6 +453,12 @@ async function render() {
       document.getElementById("app").innerHTML = await ViewPaymentPending();
       return;
     }
+    maybeRefreshTrialStatus();
+  }
+
+  if (!shopSettings) {
+    try { shopSettings = USE_SAMPLE_DATA ? sampleSettings : await Api.getSettings(); }
+    catch { shopSettings = {}; }
   }
 
   showNav();
@@ -402,6 +481,7 @@ async function render() {
 let authMode = "login"; // or "signup"
 
 async function ViewAuth() {
+  if (authMode === "forgot") return ViewForgotPassword();
   return `
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
       <div class="text-center mb-6">
@@ -420,12 +500,92 @@ async function ViewAuth() {
         <button id="auth-submit-btn" onclick="submitAuth()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">
           ${authMode === "signup" ? "Create account" : "Log in"}
         </button>
+        ${authMode === "login" ? `<button onclick="authMode='forgot'; render()" class="w-full text-xs text-primary underline text-center">Forgot your password?</button>` : ""}
       </div>
       <p class="text-xs text-ink/40 text-center mt-4">
-        ${authMode === "signup" ? "Free for 7 days, no card needed to start." : "Forgot your password? Contact support."}
+        ${authMode === "signup" ? "Free for 7 days, no card needed to start." : ""}
       </p>
     </div>
   `;
+}
+
+function ViewForgotPassword() {
+  return `
+    <div class="max-w-sm mx-auto mt-10 md:mt-20">
+      <div class="text-center mb-6">
+        <div class="font-display text-3xl font-extrabold text-primary-dark">Duka</div>
+        <p class="text-sm text-ink/50 mt-1">Reset your password</p>
+      </div>
+      <div class="card p-4 space-y-3">
+        <input id="forgot-email" type="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5"
+          onkeydown="if(event.key==='Enter') submitForgotPassword()" />
+        <button id="forgot-submit-btn" onclick="submitForgotPassword()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Send reset link</button>
+        <button onclick="authMode='login'; render()" class="w-full text-xs text-ink/50 underline text-center">Back to log in</button>
+      </div>
+    </div>
+  `;
+}
+
+async function submitForgotPassword() {
+  const email = document.getElementById("forgot-email").value.trim();
+  if (!email) { toast("Enter your email"); return; }
+  const btn = document.getElementById("forgot-submit-btn");
+  btn.disabled = true;
+  btn.classList.add("opacity-60");
+  btn.textContent = "Sending…";
+  try {
+    await Api.requestPasswordReset(email);
+    toast("If that email has an account, a reset link is on its way.");
+    authMode = "login";
+    render();
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
+    btn.classList.remove("opacity-60");
+    btn.textContent = "Send reset link";
+  }
+}
+
+function ViewResetPassword(token) {
+  return `
+    <div class="max-w-sm mx-auto mt-10 md:mt-20">
+      <div class="text-center mb-6">
+        <div class="font-display text-3xl font-extrabold text-primary-dark">Duka</div>
+        <p class="text-sm text-ink/50 mt-1">Set a new password</p>
+      </div>
+      <div class="card p-4 space-y-3">
+        <input id="reset-new-password" type="password" placeholder="New password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+        <input id="reset-confirm-password" type="password" placeholder="Confirm new password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+        <button id="reset-submit-btn" onclick="submitResetPassword('${token}')" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update password</button>
+      </div>
+    </div>
+  `;
+}
+
+async function submitResetPassword(token) {
+  const next = document.getElementById("reset-new-password").value;
+  const confirm = document.getElementById("reset-confirm-password").value;
+  if (!next || next.length < 6) { toast("Password must be at least 6 characters"); return; }
+  if (next !== confirm) { toast("Passwords don't match"); return; }
+
+  const btn = document.getElementById("reset-submit-btn");
+  btn.disabled = true;
+  btn.classList.add("opacity-60");
+  btn.textContent = "Updating…";
+  try {
+    await Api.resetPassword(token, next);
+    window.history.replaceState({}, "", window.location.pathname);
+    authToken = null;
+    currentShop = null;
+    authMode = "login";
+    toast("Password updated, log in with your new password.");
+    render();
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
+    btn.classList.remove("opacity-60");
+    btn.textContent = "Update password";
+  }
 }
 
 async function submitAuth() {
@@ -1015,7 +1175,8 @@ function blobToBase64(blob) {
 // ---------------- SETTINGS VIEW ----------------
 
 async function ViewSettings() {
-  const s = await Api.getSettings();
+  const s = USE_SAMPLE_DATA ? sampleSettings : await Api.getSettings();
+  shopSettings = s;
   return `
     <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">Settings</h1>
     <div class="card p-4 space-y-3">
@@ -1036,8 +1197,12 @@ async function ViewSettings() {
         <input id="set-desc" value="${s.business_description || ""}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
       </div>
       <div>
-        <label class="text-xs text-ink/50">Currency symbol</label>
-        <input id="set-currency" value="${s.currency_symbol || "₦"}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+        <label class="text-xs text-ink/50">Currency</label>
+        <select id="set-currency" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1 bg-white">
+          ${Object.entries(CURRENCIES).map(([code, c]) => `
+            <option value="${code}" ${((s.currency_code || "NGN") === code) ? "selected" : ""}>${code} — ${c.symbol} ${c.name}</option>
+          `).join("")}
+        </select>
       </div>
       <div>
         <label class="text-xs text-ink/50">Default low stock alert</label>
@@ -1101,15 +1266,18 @@ async function onLogoSelected(event) {
 }
 
 async function saveSettings() {
+  const currencyCode = document.getElementById("set-currency").value;
   const data = {
     business_name: document.getElementById("set-name").value.trim() || "My Shop",
     business_description: document.getElementById("set-desc").value.trim(),
-    currency_symbol: document.getElementById("set-currency").value.trim() || "₦",
+    currency_code: currencyCode,
+    currency_symbol: CURRENCIES[currencyCode]?.symbol || "₦",
     default_low_stock_threshold: parseInt(document.getElementById("set-threshold").value) || 5,
   };
   if (pendingLogoDataUrl) data.logo_url = pendingLogoDataUrl;
   try {
-    await Api.updateSettings(data);
+    const updated = await Api.updateSettings(data);
+    shopSettings = USE_SAMPLE_DATA ? sampleSettings : updated;
     pendingLogoDataUrl = null;
     toast("Settings saved");
     render();
