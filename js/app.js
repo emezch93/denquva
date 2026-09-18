@@ -367,6 +367,33 @@ const Api = {
     return apiJson(res);
   },
 
+  async uploadDocument(data, mime_type, label) {
+    const res = await authFetch(`${API_BASE}/api/documents`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data, mime_type, label }),
+    });
+    return apiJson(res);
+  },
+
+  async updateDocumentLabel(id, label) {
+    const res = await authFetch(`${API_BASE}/api/documents/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label }),
+    });
+    return apiJson(res);
+  },
+
+  async listDocuments() {
+    if (USE_SAMPLE_DATA) return [];
+    const res = await authFetch(`${API_BASE}/api/documents`);
+    return apiJson(res);
+  },
+
+  async deleteDocument(id) {
+    const res = await authFetch(`${API_BASE}/api/documents/${id}`, { method: "DELETE" });
+    return apiJson(res);
+  },
+
   async importProducts(rows) {
     const res = await authFetch(`${API_BASE}/api/import/products`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows }),
@@ -519,7 +546,14 @@ async function render() {
     if (currentView === "dashboard") app.innerHTML = await ViewDashboard();
     if (currentView === "products") app.innerHTML = await ViewProducts();
     if (currentView === "sales") app.innerHTML = await ViewSales();
-    if (currentView === "ai") app.innerHTML = await ViewAI();
+    if (currentView === "ai") {
+      app.innerHTML = await ViewAI();
+      if (pendingAIQuestion) {
+        const input = document.getElementById("ai-input");
+        if (input) input.value = pendingAIQuestion;
+        pendingAIQuestion = null;
+      }
+    }
     if (currentView === "settings") app.innerHTML = await ViewSettings();
   } catch (err) {
     app.innerHTML = `<div class="text-center py-16 text-danger">Something went wrong: ${err.message}</div>`;
@@ -1079,6 +1113,8 @@ async function ViewAI() {
     <div class="flex ${m.role === "user" ? "justify-end" : "justify-start"} mb-3">
       <div data-msg-index="${i}" class="max-w-[80%] px-4 py-2.5 rounded-2xl text-sm ${m.role === "user" ? "bg-primary text-white" : "bg-surface border border-black/10"}">${m.text}</div>
     </div>`).join("");
+  const documents = USE_SAMPLE_DATA ? [] : await Api.listDocuments();
+  cachedDocuments = documents;
 
   return `
     <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">AI Assistant</h1>
@@ -1090,7 +1126,7 @@ async function ViewAI() {
       </div>
     ` : ""}
     <div class="flex gap-2">
-      <label title="Attach a receipt, invoice, or document" class="w-11 h-11 rounded-full bg-surface border border-black/10 flex items-center justify-center flex-shrink-0 cursor-pointer">
+      <label title="Attach a receipt, invoice, or document to this question only" class="w-11 h-11 rounded-full bg-surface border border-black/10 flex items-center justify-center flex-shrink-0 cursor-pointer">
         📎
         <input type="file" accept="image/*,.pdf" class="hidden" onchange="onAttachmentSelected(event)" />
       </label>
@@ -1106,6 +1142,39 @@ async function ViewAI() {
       <input id="ai-input" placeholder="Ask about your business" class="flex-1 border border-black/10 rounded-full px-4 py-2.5"
         onkeydown="if(event.key==='Enter') sendAIMessage()" />
       <button onclick="sendAIMessage()" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full">Ask</button>
+    </div>
+
+    <div class="card p-4 mt-4">
+      <div class="flex items-center justify-between mb-1">
+        <h2 class="font-display font-bold">Business Documents</h2>
+        <label class="text-xs bg-primary-light text-primary-dark font-semibold px-3 py-1.5 rounded-full cursor-pointer whitespace-nowrap">
+          + Upload
+          <input type="file" accept="image/*,.pdf" class="hidden" onchange="onDocumentUpload(event)" />
+        </label>
+      </div>
+      <p class="text-xs text-ink/40 mb-2">Receipts, invoices, purchase orders. Every question the AI answers can already draw on all of these together, not just one you attach.</p>
+      ${documents.length ? documents.map(d => `
+        <div class="border-b border-black/5 last:border-0 py-2">
+          <div class="flex items-start justify-between gap-2 cursor-pointer" onclick="toggleDocumentExpanded(${d.id})">
+            <div>
+              <div class="text-sm font-medium">${d.label || d.vendor || d.document_type || "Document"}</div>
+              <div class="text-xs text-ink/45">${d.document_type || ""}${d.amount ? " · " + formatMoney(d.amount) : ""}${d.document_date ? " · " + d.document_date : ""}</div>
+            </div>
+            <span class="text-xs text-ink/30 flex-shrink-0">${expandedDocumentId === d.id ? "▲" : "▼"}</span>
+          </div>
+          ${expandedDocumentId === d.id ? `
+            <div class="mt-2 pl-1 space-y-2">
+              <p class="text-sm text-ink/70">${d.summary}</p>
+              <p class="text-xs text-ink/40">No original file is kept, only what was read from it, so this is the full record.</p>
+              <div class="flex gap-2 flex-wrap">
+                <button onclick="editDocumentLabel(${d.id})" class="text-xs bg-black/5 font-semibold px-3 py-1.5 rounded-full">Edit label</button>
+                <button onclick="askAIAboutDocument(${d.id})" class="text-xs bg-primary-light text-primary-dark font-semibold px-3 py-1.5 rounded-full">Ask AI about this</button>
+                <button onclick="deleteDocumentFlow(${d.id})" class="text-xs bg-danger-light text-danger font-semibold px-3 py-1.5 rounded-full">Delete</button>
+              </div>
+            </div>
+          ` : ""}
+        </div>
+      `).join("") : `<div class="text-sm text-ink/40 py-3 text-center">No documents uploaded yet.</div>`}
     </div>
   `;
 }
@@ -1134,6 +1203,69 @@ async function onAttachmentSelected(event) {
 function clearAttachment() {
   pendingAttachment = null;
   render();
+}
+
+async function onDocumentUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  toast("Reading document…");
+  try {
+    let data, mimeType;
+    if (file.type === "application/pdf") {
+      data = await blobToBase64(file);
+      mimeType = "application/pdf";
+    } else {
+      data = (await compressImageToDataUrl(file, 1200, 1200, 0.8)).split(",")[1];
+      mimeType = "image/jpeg";
+    }
+    const saved = await Api.uploadDocument(data, mimeType);
+    toast(`Saved: ${saved.vendor || saved.document_type}${saved.amount ? " · " + formatMoney(saved.amount) : ""}. Add a label anytime by opening it.`);
+    render();
+  } catch (err) {
+    toast(err.message || "Could not read that document");
+  }
+  event.target.value = "";
+}
+
+let cachedDocuments = [];
+let expandedDocumentId = null;
+let pendingAIQuestion = null;
+
+function toggleDocumentExpanded(id) {
+  expandedDocumentId = expandedDocumentId === id ? null : id;
+  render();
+}
+
+async function editDocumentLabel(id) {
+  const doc = cachedDocuments.find(d => d.id === id);
+  const label = prompt("Label for this document:", doc?.label || "");
+  if (label === null) return;
+  try {
+    await Api.updateDocumentLabel(id, label.trim());
+    toast("Label updated");
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function askAIAboutDocument(id) {
+  const doc = cachedDocuments.find(d => d.id === id);
+  if (!doc) return;
+  expandedDocumentId = null;
+  pendingAIQuestion = `Tell me more about this ${doc.document_type || "document"}${doc.label ? ` ("${doc.label}")` : ""}, and how it relates to my other business records.`;
+  setView("ai");
+}
+
+async function deleteDocumentFlow(id) {
+  if (!confirm("Remove this document? The AI will no longer be able to refer back to it.")) return;
+  try {
+    await Api.deleteDocument(id);
+    toast("Document removed");
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 async function sendAIMessage() {
