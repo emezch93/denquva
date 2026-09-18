@@ -433,6 +433,28 @@ function setView(view) {
   render();
 }
 
+// A password field with a Show/Hide toggle, so the person can check
+// what they actually typed instead of guessing at hidden dots.
+function passwordFieldHtml(id, placeholder, extraAttrs = "") {
+  return `
+    <div class="relative">
+      <input id="${id}" type="password" placeholder="${placeholder}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 pr-14" ${extraAttrs} />
+      <button type="button" onclick="togglePasswordVisibility('${id}', this)" class="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 text-xs font-semibold">Show</button>
+    </div>`;
+}
+
+function togglePasswordVisibility(id, btn) {
+  const input = document.getElementById(id);
+  if (!input) return;
+  if (input.type === "password") {
+    input.type = "text";
+    btn.textContent = "Hide";
+  } else {
+    input.type = "password";
+    btn.textContent = "Show";
+  }
+}
+
 function toast(message) {
   const el = document.getElementById("toast");
   el.textContent = message;
@@ -579,8 +601,7 @@ async function ViewAuth() {
       <div class="card p-4 space-y-3">
         ${authMode === "signup" ? `<input id="auth-shopname" placeholder="Shop name" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />` : ""}
         <input id="auth-email" type="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
-        <input id="auth-password" type="password" placeholder="Password" class="w-full border border-black/10 rounded-xl px-3 py-2.5"
-          onkeydown="if(event.key==='Enter') submitAuth()" />
+        ${passwordFieldHtml("auth-password", "Password", `onkeydown="if(event.key==='Enter') submitAuth()"`)}
         ${authMode === "signup" ? `
           <input id="auth-security-question" placeholder="A security question only you'd know the answer to" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
           <input id="auth-security-answer" placeholder="Your answer" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
@@ -616,8 +637,8 @@ function ViewForgotPassword() {
         ` : `
           <p class="text-sm font-medium">${forgotQuestion}</p>
           <input id="forgot-answer" placeholder="Your answer" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
-          <input id="forgot-new-password" type="password" placeholder="New password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
-          <input id="forgot-confirm-password" type="password" placeholder="Confirm new password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+          ${passwordFieldHtml("forgot-new-password", "New password")}
+          ${passwordFieldHtml("forgot-confirm-password", "Confirm new password")}
           <button id="forgot-submit-btn" onclick="submitForgotAnswer()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update password</button>
         `}
         <button onclick="authMode='login'; forgotStep='email'; render()" class="w-full text-xs text-ink/50 underline text-center">Back to log in</button>
@@ -1491,15 +1512,15 @@ async function ViewSettings() {
     ` : ""}
     <div class="card p-4 space-y-3 mt-4">
       <h2 class="font-display font-bold">Change password</h2>
-      <input id="cp-current" type="password" placeholder="Current password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
-      <input id="cp-new" type="password" placeholder="New password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
-      <input id="cp-confirm" type="password" placeholder="Confirm new password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+      ${passwordFieldHtml("cp-current", "Current password")}
+      ${passwordFieldHtml("cp-new", "New password")}
+      ${passwordFieldHtml("cp-confirm", "Confirm new password")}
       <button onclick="submitChangePassword()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update Password</button>
     </div>
     <div class="card p-4 space-y-3 mt-4">
       <h2 class="font-display font-bold">Security question</h2>
       <p class="text-sm text-ink/50">This is what unlocks a password reset if you're ever locked out. Update it if you want a different one.</p>
-      <input id="sq-current-password" type="password" placeholder="Current password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+      ${passwordFieldHtml("sq-current-password", "Current password")}
       <input id="sq-question" placeholder="New security question" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
       <input id="sq-answer" placeholder="New answer" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
       <button onclick="submitUpdateSecurityQuestion()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update Security Question</button>
