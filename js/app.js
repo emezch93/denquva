@@ -1,9 +1,6 @@
+
 const API_BASE = "https://duka-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = false;
-
-// Every shop picks its own currency in Settings, this is the list they
-// choose from. Symbol and locale drive both the display symbol and the
-// number formatting (thousands separators etc).
 const CURRENCIES = {
   NGN: { symbol: "₦", locale: "en-NG", name: "Nigerian Naira" },
   USD: { symbol: "$", locale: "en-US", name: "US Dollar" },
@@ -36,9 +33,14 @@ let shopSettings = null;
 let authToken = localStorage.getItem("duka_token") || null;
 let currentShop = null; // { shop_name, email, subscription_status }
 
+// Which shop this session is currently operating on. Defaults to the
+// login's own shop, but a login that runs several shops can switch.
+let activeShopId = localStorage.getItem("duka_active_shop_id") || null;
+
 async function authFetch(url, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+  if (activeShopId) headers["X-Shop-Id"] = activeShopId;
   return fetch(url, { ...options, headers });
 }
 
@@ -46,7 +48,9 @@ function logout() {
   authToken = null;
   currentShop = null;
   shopSettings = null;
+  activeShopId = null;
   localStorage.removeItem("duka_token");
+  localStorage.removeItem("duka_active_shop_id");
   render();
 }
 
@@ -235,12 +239,12 @@ const Api = {
     return apiJson(res);
   },
 
-  async askAI(question) {
+  async askAI(question, attachment) {
     if (USE_SAMPLE_DATA) {
       return { answer: "The AI assistant will answer using your real sales data once the Worker and AI key are connected. For now this is sample mode." };
     }
     const res = await authFetch(`${API_BASE}/api/ai`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question, attachment }),
     });
     return apiJson(res);
   },
@@ -274,10 +278,10 @@ const Api = {
     return apiJson(res);
   },
 
-  async signup({ shop_name, email, password }) {
+  async signup({ shop_name, email, password, security_question, security_answer }) {
     const res = await fetch(`${API_BASE}/auth/signup`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shop_name, email, password }),
+      body: JSON.stringify({ shop_name, email, password, security_question, security_answer }),
     });
     return apiJson(res);
   },
@@ -319,18 +323,63 @@ const Api = {
     return apiJson(res);
   },
 
-  async requestPasswordReset(email) {
-    const res = await fetch(`${API_BASE}/auth/forgot-password`, {
+  async getSecurityQuestion(email) {
+    const res = await fetch(`${API_BASE}/auth/security-question?email=${encodeURIComponent(email)}`);
+    return apiJson(res);
+  },
+
+  async resetPasswordWithAnswer(email, answer, new_password) {
+    const res = await fetch(`${API_BASE}/auth/reset-password-with-answer`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, answer, new_password }),
     });
     return apiJson(res);
   },
 
-  async resetPassword(token, new_password) {
-    const res = await fetch(`${API_BASE}/auth/reset-password`, {
+  async updateSecurityQuestion(current_password, security_question, security_answer) {
+    const res = await authFetch(`${API_BASE}/auth/update-security-question`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, new_password }),
+      body: JSON.stringify({ current_password, security_question, security_answer }),
+    });
+    return apiJson(res);
+  },
+
+  async listShops() {
+    if (USE_SAMPLE_DATA) return [{ id: 1, shop_name: sampleSettings.business_name, is_owner: true }];
+    const res = await authFetch(`${API_BASE}/api/shops`);
+    return apiJson(res);
+  },
+
+  async createShop(shop_name) {
+    const res = await authFetch(`${API_BASE}/api/shops`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shop_name }),
+    });
+    return apiJson(res);
+  },
+
+  async duplicateShop(id) {
+    const res = await authFetch(`${API_BASE}/api/shops/${id}/duplicate`, { method: "POST" });
+    return apiJson(res);
+  },
+
+  async importProducts(rows) {
+    const res = await authFetch(`${API_BASE}/api/import/products`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows }),
+    });
+    return apiJson(res);
+  },
+
+  async importSales(rows) {
+    const res = await authFetch(`${API_BASE}/api/import/sales`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows }),
+    });
+    return apiJson(res);
+  },
+
+  async importStock(rows) {
+    const res = await authFetch(`${API_BASE}/api/import/stock`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows }),
     });
     return apiJson(res);
   },
@@ -415,13 +464,6 @@ async function maybeRefreshTrialStatus() {
 }
 
 async function render() {
-  const resetToken = !USE_SAMPLE_DATA ? new URLSearchParams(window.location.search).get("reset_token") : null;
-  if (resetToken) {
-    hideNav();
-    document.getElementById("app").innerHTML = ViewResetPassword(resetToken);
-    return;
-  }
-
   // Sample mode has no Worker to log into, so it skips straight to the app.
   if (!USE_SAMPLE_DATA) {
     if (!authToken) {
@@ -432,6 +474,10 @@ async function render() {
     if (!currentShop) {
       try {
         currentShop = await Api.me();
+        if (!activeShopId) {
+          activeShopId = String(currentShop.id);
+          localStorage.setItem("duka_active_shop_id", activeShopId);
+        }
       } catch (err) {
         if (err.status === 401) {
           logout();
@@ -497,6 +543,10 @@ async function ViewAuth() {
         <input id="auth-email" type="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
         <input id="auth-password" type="password" placeholder="Password" class="w-full border border-black/10 rounded-xl px-3 py-2.5"
           onkeydown="if(event.key==='Enter') submitAuth()" />
+        ${authMode === "signup" ? `
+          <input id="auth-security-question" placeholder="A security question only you'd know the answer to" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+          <input id="auth-security-answer" placeholder="Your answer" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+        ` : ""}
         <button id="auth-submit-btn" onclick="submitAuth()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">
           ${authMode === "signup" ? "Create account" : "Log in"}
         </button>
@@ -509,6 +559,10 @@ async function ViewAuth() {
   `;
 }
 
+let forgotStep = "email"; // then "answer"
+let forgotEmail = "";
+let forgotQuestion = "";
+
 function ViewForgotPassword() {
   return `
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
@@ -517,67 +571,60 @@ function ViewForgotPassword() {
         <p class="text-sm text-ink/50 mt-1">Reset your password</p>
       </div>
       <div class="card p-4 space-y-3">
-        <input id="forgot-email" type="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5"
-          onkeydown="if(event.key==='Enter') submitForgotPassword()" />
-        <button id="forgot-submit-btn" onclick="submitForgotPassword()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Send reset link</button>
-        <button onclick="authMode='login'; render()" class="w-full text-xs text-ink/50 underline text-center">Back to log in</button>
+        ${forgotStep === "email" ? `
+          <input id="forgot-email" type="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5"
+            onkeydown="if(event.key==='Enter') submitForgotEmail()" />
+          <button id="forgot-submit-btn" onclick="submitForgotEmail()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Continue</button>
+        ` : `
+          <p class="text-sm font-medium">${forgotQuestion}</p>
+          <input id="forgot-answer" placeholder="Your answer" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+          <input id="forgot-new-password" type="password" placeholder="New password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+          <input id="forgot-confirm-password" type="password" placeholder="Confirm new password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+          <button id="forgot-submit-btn" onclick="submitForgotAnswer()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update password</button>
+        `}
+        <button onclick="authMode='login'; forgotStep='email'; render()" class="w-full text-xs text-ink/50 underline text-center">Back to log in</button>
       </div>
     </div>
   `;
 }
 
-async function submitForgotPassword() {
+async function submitForgotEmail() {
   const email = document.getElementById("forgot-email").value.trim();
   if (!email) { toast("Enter your email"); return; }
   const btn = document.getElementById("forgot-submit-btn");
   btn.disabled = true;
   btn.classList.add("opacity-60");
-  btn.textContent = "Sending…";
+  btn.textContent = "Checking…";
   try {
-    await Api.requestPasswordReset(email);
-    toast("If that email has an account, a reset link is on its way.");
-    authMode = "login";
+    const { question } = await Api.getSecurityQuestion(email);
+    forgotEmail = email;
+    forgotQuestion = question;
+    forgotStep = "answer";
     render();
   } catch (err) {
     toast(err.message);
     btn.disabled = false;
     btn.classList.remove("opacity-60");
-    btn.textContent = "Send reset link";
+    btn.textContent = "Continue";
   }
 }
 
-function ViewResetPassword(token) {
-  return `
-    <div class="max-w-sm mx-auto mt-10 md:mt-20">
-      <div class="text-center mb-6">
-        <div class="font-display text-3xl font-extrabold text-primary-dark">Duka</div>
-        <p class="text-sm text-ink/50 mt-1">Set a new password</p>
-      </div>
-      <div class="card p-4 space-y-3">
-        <input id="reset-new-password" type="password" placeholder="New password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
-        <input id="reset-confirm-password" type="password" placeholder="Confirm new password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
-        <button id="reset-submit-btn" onclick="submitResetPassword('${token}')" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update password</button>
-      </div>
-    </div>
-  `;
-}
-
-async function submitResetPassword(token) {
-  const next = document.getElementById("reset-new-password").value;
-  const confirm = document.getElementById("reset-confirm-password").value;
+async function submitForgotAnswer() {
+  const answer = document.getElementById("forgot-answer").value.trim();
+  const next = document.getElementById("forgot-new-password").value;
+  const confirm = document.getElementById("forgot-confirm-password").value;
+  if (!answer) { toast("Enter your answer"); return; }
   if (!next || next.length < 6) { toast("Password must be at least 6 characters"); return; }
   if (next !== confirm) { toast("Passwords don't match"); return; }
 
-  const btn = document.getElementById("reset-submit-btn");
+  const btn = document.getElementById("forgot-submit-btn");
   btn.disabled = true;
   btn.classList.add("opacity-60");
   btn.textContent = "Updating…";
   try {
-    await Api.resetPassword(token, next);
-    window.history.replaceState({}, "", window.location.pathname);
-    authToken = null;
-    currentShop = null;
+    await Api.resetPasswordWithAnswer(forgotEmail, answer, next);
     authMode = "login";
+    forgotStep = "email";
     toast("Password updated, log in with your new password.");
     render();
   } catch (err) {
@@ -602,8 +649,11 @@ async function submitAuth() {
   try {
     if (authMode === "signup") {
       const shop_name = document.getElementById("auth-shopname").value.trim();
+      const security_question = document.getElementById("auth-security-question").value.trim();
+      const security_answer = document.getElementById("auth-security-answer").value.trim();
       if (!shop_name) { toast("Shop name is required"); return; }
-      const result = await Api.signup({ shop_name, email, password });
+      if (!security_question || !security_answer) { toast("A security question and answer are required, they're how you recover your password"); return; }
+      const result = await Api.signup({ shop_name, email, password, security_question, security_answer });
       authToken = result.token;
       localStorage.setItem("duka_token", authToken);
       if (result.authorization_url) {
@@ -1029,7 +1079,17 @@ async function ViewAI() {
   return `
     <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">AI Assistant</h1>
     <div class="card p-4 mb-3 min-h-[50vh] flex flex-col justify-end" id="ai-thread">${bubbles}</div>
+    ${pendingAttachment ? `
+      <div class="flex items-center justify-between bg-primary-light text-primary-dark text-xs font-medium rounded-full px-3 py-2 mb-2">
+        <span>📎 ${pendingAttachment.name}</span>
+        <button onclick="clearAttachment()" class="font-bold">✕</button>
+      </div>
+    ` : ""}
     <div class="flex gap-2">
+      <label title="Attach a receipt, invoice, or document" class="w-11 h-11 rounded-full bg-surface border border-black/10 flex items-center justify-center flex-shrink-0 cursor-pointer">
+        📎
+        <input type="file" accept="image/*,.pdf" class="hidden" onchange="onAttachmentSelected(event)" />
+      </label>
       <button id="mic-btn" onclick="toggleVoiceInput()" title="Record a voice question"
         class="w-11 h-11 rounded-full bg-surface border border-black/10 flex items-center justify-center flex-shrink-0">
         <svg id="mic-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1046,19 +1106,47 @@ async function ViewAI() {
   `;
 }
 
+let pendingAttachment = null; // { name, mimeType, data }
+
+async function onAttachmentSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    let data, mimeType;
+    if (file.type === "application/pdf") {
+      data = await blobToBase64(file);
+      mimeType = "application/pdf";
+    } else {
+      data = (await compressImageToDataUrl(file, 1200, 1200, 0.8)).split(",")[1];
+      mimeType = "image/jpeg";
+    }
+    pendingAttachment = { name: file.name, mimeType, data };
+    render();
+  } catch {
+    toast("Could not read that file");
+  }
+}
+
+function clearAttachment() {
+  pendingAttachment = null;
+  render();
+}
+
 async function sendAIMessage() {
   const input = document.getElementById("ai-input");
   const question = input.value.trim();
   if (!question) return;
-  aiMessages.push({ role: "user", text: question });
+  const attachment = pendingAttachment;
+  aiMessages.push({ role: "user", text: attachment ? `📎 ${attachment.name}\n${question}` : question });
   input.value = "";
+  pendingAttachment = null;
   const replyIndex = aiMessages.length;
   aiMessages.push({ role: "assistant", text: "···" });
   render();
 
   let answer;
   try {
-    const result = await Api.askAI(question);
+    const result = await Api.askAI(question, attachment);
     answer = result.answer || "Sorry, I could not get an answer just now.";
   } catch (err) {
     answer = "Sorry, I could not reach the AI assistant. Check your connection and try again.";
@@ -1177,8 +1265,32 @@ function blobToBase64(blob) {
 async function ViewSettings() {
   const s = USE_SAMPLE_DATA ? sampleSettings : await Api.getSettings();
   shopSettings = s;
+  const shops = USE_SAMPLE_DATA ? [] : await Api.listShops();
+
   return `
     <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">Settings</h1>
+
+    ${!USE_SAMPLE_DATA && shops.length ? `
+    <div class="card p-4 mb-4">
+      <h2 class="font-display font-bold mb-1">Your shops</h2>
+      <p class="text-sm text-ink/50 mb-3">One login, several shops or branches. Switch between them anytime.</p>
+      <div class="space-y-2">
+        ${shops.map(sh => `
+          <div class="flex items-center justify-between py-2 border-b border-black/5 last:border-0">
+            <div>
+              <div class="font-medium">${sh.shop_name}${String(sh.id) === activeShopId ? " (current)" : ""}</div>
+            </div>
+            <div class="flex gap-2">
+              ${String(sh.id) !== activeShopId ? `<button onclick="switchShop(${sh.id})" class="text-xs bg-primary-light text-primary-dark font-semibold px-3 py-1.5 rounded-full">Switch</button>` : ""}
+              <button onclick="duplicateShopFlow(${sh.id})" class="text-xs bg-black/5 font-semibold px-3 py-1.5 rounded-full">Duplicate</button>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+      <button onclick="createShopFlow()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-3">+ Create another shop</button>
+    </div>
+    ` : ""}
+
     <div class="card p-4 space-y-3">
       <div class="flex items-center gap-3">
         <div id="logo-preview" class="w-14 h-14 rounded-full bg-black/5 bg-cover bg-center flex items-center justify-center text-xl overflow-hidden"
@@ -1211,6 +1323,27 @@ async function ViewSettings() {
       <button onclick="saveSettings()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-2">Save Settings</button>
     </div>
 
+    <div class="card p-4 mt-4">
+      <h2 class="font-display font-bold mb-1">Business report</h2>
+      <p class="text-sm text-ink/50 mb-3">Download products, sales, and profit as a spreadsheet file.</p>
+      <button onclick="downloadReport()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Download report (CSV)</button>
+    </div>
+
+    ${!USE_SAMPLE_DATA ? `
+    <div class="card p-4 mt-4">
+      <h2 class="font-display font-bold mb-1">Bulk import</h2>
+      <p class="text-sm text-ink/50 mb-3">Already have products, sales, or stock in a spreadsheet? Upload it instead of typing everything in by hand.</p>
+      <select id="import-type" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2 bg-white">
+        <option value="products">Products (name, selling_price, cost_price, quantity, sku, category, description, low_stock_threshold)</option>
+        <option value="sales">Sales history (product_name or sku, quantity, unit_price, unit_cost, sold_at)</option>
+        <option value="stock">Stock additions (product_name or sku, quantity_change, note)</option>
+      </select>
+      <input id="import-file" type="file" accept=".csv,.xlsx,.xls" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
+      <p class="text-xs text-ink/40 mb-2">First row must be column headers matching the names above. Products import creates new products, it won't update existing ones. Sales import logs history without changing current stock. Stock import adds to current stock, same as Add Stock.</p>
+      <button onclick="runBulkImport()" class="w-full bg-amber text-white font-semibold py-2.5 rounded-xl">Import file</button>
+    </div>
+    ` : ""}
+
     ${!USE_SAMPLE_DATA ? `
     ${currentShop?.subscription_status === "trial" ? `
     <div class="card p-4 mt-4">
@@ -1225,6 +1358,14 @@ async function ViewSettings() {
       <input id="cp-new" type="password" placeholder="New password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
       <input id="cp-confirm" type="password" placeholder="Confirm new password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
       <button onclick="submitChangePassword()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update Password</button>
+    </div>
+    <div class="card p-4 space-y-3 mt-4">
+      <h2 class="font-display font-bold">Security question</h2>
+      <p class="text-sm text-ink/50">This is what unlocks a password reset if you're ever locked out. Update it if you want a different one.</p>
+      <input id="sq-current-password" type="password" placeholder="Current password" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+      <input id="sq-question" placeholder="New security question" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+      <input id="sq-answer" placeholder="New answer" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+      <button onclick="submitUpdateSecurityQuestion()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update Security Question</button>
     </div>
     <button onclick="logout()" class="w-full text-danger font-semibold py-2.5 rounded-xl border border-danger/20 mt-4">Log out</button>
     ` : ""}
@@ -1248,6 +1389,204 @@ async function submitChangePassword() {
     document.getElementById("cp-confirm").value = "";
   } catch (err) {
     toast(err.message);
+  }
+}
+
+// ---------------- MULTI SHOP ----------------
+
+function switchShop(id) {
+  activeShopId = String(id);
+  localStorage.setItem("duka_active_shop_id", activeShopId);
+  shopSettings = null;
+  toast("Switched shop");
+  render();
+}
+
+async function createShopFlow() {
+  const name = prompt("Name for the new shop:");
+  if (!name || !name.trim()) return;
+  try {
+    const newShop = await Api.createShop(name.trim());
+    toast(`${newShop.shop_name} created`);
+    switchShop(newShop.id);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function duplicateShopFlow(id) {
+  if (!confirm("Duplicate this shop? It copies the product catalog and settings into a brand new shop, starting with zero stock and no sales history.")) return;
+  try {
+    const newShop = await Api.duplicateShop(id);
+    toast(`Duplicated as "${newShop.shop_name}" (${newShop.products_copied} products copied)`);
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function submitUpdateSecurityQuestion() {
+  const current_password = document.getElementById("sq-current-password").value;
+  const security_question = document.getElementById("sq-question").value.trim();
+  const security_answer = document.getElementById("sq-answer").value.trim();
+  if (!current_password || !security_question || !security_answer) { toast("Fill in all three fields"); return; }
+
+  try {
+    await Api.updateSecurityQuestion(current_password, security_question, security_answer);
+    toast("Security question updated");
+    document.getElementById("sq-current-password").value = "";
+    document.getElementById("sq-question").value = "";
+    document.getElementById("sq-answer").value = "";
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+// ---------------- BUSINESS REPORT (CSV) ----------------
+
+function csvEscape(value) {
+  const str = String(value ?? "");
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+async function downloadReport() {
+  try {
+    const [products, sales, dashboard] = await Promise.all([
+      Api.getProducts(""), Api.getSales("all"), Api.getDashboard(),
+    ]);
+    const shopName = shopSettings?.business_name || "My Shop";
+    const now = new Date();
+    const rows = [];
+
+    rows.push(["Duka business report"]);
+    rows.push(["Shop", shopName]);
+    rows.push(["Generated", now.toLocaleDateString(), now.toLocaleTimeString()]);
+    rows.push(["Total products", dashboard.total_products]);
+    rows.push(["Units in stock", dashboard.total_stock]);
+    rows.push(["Total revenue (all time)", sales.reduce((a, s) => a + s.total_amount, 0)]);
+    rows.push(["Total estimated profit (all time)", sales.reduce((a, s) => a + s.estimated_profit, 0)]);
+    rows.push([]);
+
+    rows.push(["PRODUCTS"]);
+    rows.push(["Name", "Category", "SKU", "Selling price", "Cost price", "Quantity left", "Low stock threshold", "Low stock?"]);
+    products.forEach(p => rows.push([
+      p.name, p.category, p.sku, p.selling_price, p.cost_price, p.quantity, p.low_stock_threshold,
+      p.quantity <= p.low_stock_threshold ? "Yes" : "No",
+    ]));
+    rows.push([]);
+
+    rows.push(["SALES"]);
+    rows.push(["Date", "Time", "Product", "Quantity", "Unit price", "Total", "Estimated profit/loss"]);
+    sales.forEach(s => {
+      const d = new Date(s.sold_at);
+      rows.push([d.toLocaleDateString(), d.toLocaleTimeString(), s.product_name, s.quantity, s.unit_price, s.total_amount, s.estimated_profit]);
+    });
+
+    const csv = rows.map(row => row.map(csvEscape).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${shopName.replace(/[^a-z0-9]+/gi, "-")}-report-${now.toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    toast(err.message || "Could not build the report");
+  }
+}
+
+// ---------------- BULK IMPORT ----------------
+
+function parseFileToRows(file) {
+  return new Promise((resolve, reject) => {
+    const name = file.name.toLowerCase();
+    if (name.endsWith(".csv")) {
+      Papa.parse(file, {
+        header: true, skipEmptyLines: true,
+        complete: (result) => resolve(result.data),
+        error: reject,
+      });
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const workbook = XLSX.read(e.target.result, { type: "array" });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          resolve(XLSX.utils.sheet_to_json(firstSheet, { defval: "" }));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsArrayBuffer(file);
+    }
+  });
+}
+
+// Column names in the file can vary a bit, this maps common
+// alternatives onto the fields the Worker actually expects.
+const IMPORT_HEADER_ALIASES = {
+  product_name: ["product_name", "product", "name"],
+  sku: ["sku"],
+  category: ["category"],
+  description: ["description", "desc"],
+  selling_price: ["selling_price", "price", "sale_price"],
+  cost_price: ["cost_price", "cost"],
+  quantity: ["quantity", "qty", "stock"],
+  quantity_change: ["quantity_change", "quantity", "qty", "qty_added"],
+  low_stock_threshold: ["low_stock_threshold", "threshold"],
+  unit_price: ["unit_price", "price"],
+  unit_cost: ["unit_cost", "cost"],
+  sold_at: ["sold_at", "date"],
+  note: ["note", "supplier"],
+};
+
+function mapImportRow(row, fields) {
+  const lowerRow = {};
+  for (const key in row) lowerRow[key.trim().toLowerCase()] = row[key];
+
+  const mapped = {};
+  for (const field of fields) {
+    const aliases = IMPORT_HEADER_ALIASES[field] || [field];
+    for (const alias of aliases) {
+      if (lowerRow[alias] !== undefined && lowerRow[alias] !== "") {
+        mapped[field] = lowerRow[alias];
+        break;
+      }
+    }
+  }
+  return mapped;
+}
+
+async function runBulkImport() {
+  const type = document.getElementById("import-type").value;
+  const fileInput = document.getElementById("import-file");
+  const file = fileInput.files[0];
+  if (!file) { toast("Choose a file first"); return; }
+
+  try {
+    const rawRows = await parseFileToRows(file);
+    if (!rawRows.length) { toast("That file has no rows"); return; }
+
+    let rows, result;
+    if (type === "products") {
+      rows = rawRows.map(r => mapImportRow(r, ["product_name", "sku", "category", "description", "selling_price", "cost_price", "quantity", "low_stock_threshold"]))
+        .map(r => ({ name: r.product_name, ...r }));
+      result = await Api.importProducts(rows);
+    } else if (type === "sales") {
+      rows = rawRows.map(r => mapImportRow(r, ["product_name", "sku", "quantity", "unit_price", "unit_cost", "sold_at"]));
+      result = await Api.importSales(rows);
+    } else {
+      rows = rawRows.map(r => mapImportRow(r, ["product_name", "sku", "quantity_change", "note"]));
+      result = await Api.importStock(rows);
+    }
+
+    toast(`Imported ${result.imported}, skipped ${result.skipped}${result.errors.length ? " (see console for details)" : ""}`);
+    if (result.errors.length) console.warn("Import issues:", result.errors);
+    fileInput.value = "";
+    render();
+  } catch (err) {
+    toast(err.message || "Could not read that file");
   }
 }
 
