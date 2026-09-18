@@ -1,4 +1,3 @@
-
 const API_BASE = "https://duka-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = false;
 const CURRENCIES = {
@@ -360,6 +359,11 @@ const Api = {
 
   async duplicateShop(id) {
     const res = await authFetch(`${API_BASE}/api/shops/${id}/duplicate`, { method: "POST" });
+    return apiJson(res);
+  },
+
+  async deleteShop(id) {
+    const res = await authFetch(`${API_BASE}/api/shops/${id}`, { method: "DELETE" });
     return apiJson(res);
   },
 
@@ -1283,6 +1287,7 @@ async function ViewSettings() {
             <div class="flex gap-2">
               ${String(sh.id) !== activeShopId ? `<button onclick="switchShop(${sh.id})" class="text-xs bg-primary-light text-primary-dark font-semibold px-3 py-1.5 rounded-full">Switch</button>` : ""}
               <button onclick="duplicateShopFlow(${sh.id})" class="text-xs bg-black/5 font-semibold px-3 py-1.5 rounded-full">Duplicate</button>
+              ${!sh.is_owner ? `<button onclick="deleteShopFlow(${sh.id}, '${sh.shop_name.replace(/'/g, "\\'")}')" class="text-xs bg-danger-light text-danger font-semibold px-3 py-1.5 rounded-full">Delete</button>` : ""}
             </div>
           </div>
         `).join("")}
@@ -1419,6 +1424,22 @@ async function duplicateShopFlow(id) {
   try {
     const newShop = await Api.duplicateShop(id);
     toast(`Duplicated as "${newShop.shop_name}" (${newShop.products_copied} products copied)`);
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function deleteShopFlow(id, name) {
+  if (!confirm(`Delete "${name}"? This only works if nothing has been sold or restocked there yet, it's meant for undoing a shop you just created or duplicated by mistake.`)) return;
+  try {
+    await Api.deleteShop(id);
+    if (activeShopId === String(id)) {
+      activeShopId = String(currentShop.id);
+      localStorage.setItem("duka_active_shop_id", activeShopId);
+      shopSettings = null;
+    }
+    toast(`"${name}" deleted`);
     render();
   } catch (err) {
     toast(err.message);
