@@ -51,8 +51,25 @@
 
   <main id="app" class="max-w-3xl mx-auto px-4 py-5 md:py-8"></main>
 
+  <!-- Footer -->
+  <footer class="max-w-3xl mx-auto px-4 pb-6 pt-2 text-center">
+    <div class="flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-ink/50 mb-2">
+      <button onclick="showFooterInfo('about')" class="hover:text-primary-dark underline-offset-2 hover:underline">About</button>
+      <button onclick="showFooterInfo('support')" class="hover:text-primary-dark underline-offset-2 hover:underline">Support</button>
+      <button onclick="showFooterInfo('privacy')" class="hover:text-primary-dark underline-offset-2 hover:underline">Privacy Policy</button>
+      <button onclick="showFooterInfo('terms')" class="hover:text-primary-dark underline-offset-2 hover:underline">Terms of Service</button>
+      <a href="mailto:dukashopmanager@gmail.com" class="hover:text-primary-dark underline-offset-2 hover:underline">dukashopmanager@gmail.com</a>
+    </div>
+    <p class="text-xs text-ink/30">© Duka Shop Manager. All rights reserved.</p>
+  </footer>
+
   <!-- Bottom nav (mobile) -->
   <nav class="md:hidden fixed bottom-0 inset-x-0 z-30 bg-surface border-t border-black/5 flex justify-around py-1.5" id="bottom-nav"></nav>
+
+  <!-- Footer info modal (About / Support / Privacy / Terms) -->
+  <div id="info-modal" class="hidden fixed inset-0 z-40 bg-black/40 flex items-end md:items-center justify-center">
+    <div class="bg-surface w-full md:max-w-md rounded-t-3xl md:rounded-3xl p-6 max-h-[80vh] overflow-y-auto" id="info-modal-body"></div>
+  </div>
 
   <!-- Sell modal -->
   <div id="sell-modal" class="hidden fixed inset-0 z-40 bg-black/40 flex items-end md:items-center justify-center">
