@@ -383,6 +383,14 @@ const Api = {
     return apiJson(res);
   },
 
+  async markDocumentApplied(id) {
+    const res = await authFetch(`${API_BASE}/api/documents/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ applied: true }),
+    });
+    return apiJson(res);
+  },
+
   async listDocuments() {
     if (USE_SAMPLE_DATA) return [];
     const res = await authFetch(`${API_BASE}/api/documents`);
@@ -1084,6 +1092,59 @@ function closeModal(id) {
   document.getElementById(id).classList.add("hidden");
 }
 
+// ---------------- FOOTER INFO ----------------
+// Placeholder copy for About/Support/Privacy/Terms. The privacy and
+// terms text especially should be reviewed by a lawyer before this is
+// relied on as an actual legal policy, this is a reasonable starting
+// draft, not legal advice.
+const FOOTER_INFO = {
+  about: {
+    title: "About Duka",
+    body: `Duka is a complete shop management platform for tracking inventory, sales, and profit in real time.
+      Add products with photos and pricing, record sales with one tap, and every transaction is logged with a
+      full audit trail. A built-in AI assistant answers business questions, reads uploaded receipts and invoices,
+      and can even help apply what it reads directly to your stock. One account supports multiple shops or
+      branches, each fully independent.`,
+  },
+  support: {
+    title: "Support",
+    body: `Need help with your account, billing, or something in the app isn't working as expected? Email
+      <a href="mailto:dukashopmanager@gmail.com" class="text-primary-dark underline">dukashopmanager@gmail.com</a>
+      and describe what happened, including your shop name if you can. We aim to respond as quickly as possible.`,
+  },
+  privacy: {
+    title: "Privacy Policy",
+    body: `Duka stores the business data you enter, products, sales, stock movements, and settings, to provide
+      the service. Payment is processed by Paystack, Duka does not store your card details. Questions you ask
+      the AI assistant, and any documents you upload, are sent to Google's Gemini API to generate a response;
+      document uploads are summarized and the summary is kept, the original file is not stored. Your data is
+      never sold. Data for each shop is kept separate and is never visible to other shops on the platform.
+      Contact <a href="mailto:dukashopmanager@gmail.com" class="text-primary-dark underline">dukashopmanager@gmail.com</a>
+      with any privacy questions.`,
+  },
+  terms: {
+    title: "Terms of Service",
+    body: `By using Duka you agree to use it for lawful business purposes and to keep your login credentials
+      secure. New accounts include a 7 day free trial; continued use after the trial requires an active paid
+      subscription, billed in advance for the period selected. Subscriptions do not renew automatically onto a
+      different price without notice. Duka is provided as-is; we work to keep it reliable but cannot guarantee
+      uninterrupted service. You are responsible for the accuracy of the business data you enter. Contact
+      <a href="mailto:dukashopmanager@gmail.com" class="text-primary-dark underline">dukashopmanager@gmail.com</a>
+      with any questions about these terms.`,
+  },
+};
+
+function showFooterInfo(key) {
+  const info = FOOTER_INFO[key];
+  if (!info) return;
+  document.getElementById("info-modal-body").innerHTML = `
+    <h2 class="font-display text-xl font-extrabold mb-3">${info.title}</h2>
+    <p class="text-sm text-ink/70 leading-relaxed whitespace-pre-line">${info.body}</p>
+    <button onclick="closeModal('info-modal')" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-5">Close</button>
+  `;
+  document.getElementById("info-modal").classList.remove("hidden");
+}
+
 // ---------------- SALES VIEW ----------------
 
 let salesRange = "today";
@@ -1187,6 +1248,7 @@ async function ViewAI() {
             <div class="mt-2 pl-1 space-y-2">
               <p class="text-sm text-ink/70">${d.summary}</p>
               <p class="text-xs text-ink/40">No original file is kept, only what was read from it, so this is the full record.</p>
+              ${documentLineItemsHtml(d)}
               <div class="flex gap-2 flex-wrap">
                 <button onclick="editDocumentLabel(${d.id})" class="text-xs bg-black/5 font-semibold px-3 py-1.5 rounded-full">Edit label</button>
                 <button onclick="askAIAboutDocument(${d.id})" class="text-xs bg-primary-light text-primary-dark font-semibold px-3 py-1.5 rounded-full">Ask AI about this</button>
@@ -1287,6 +1349,113 @@ async function deleteDocumentFlow(id) {
   } catch (err) {
     toast(err.message);
   }
+}
+
+// ---------------- APPLY DOCUMENT ITEMS TO STOCK ----------------
+// Extracted line items are always shown for review, never applied
+// automatically, a misread quantity should never silently corrupt
+// real stock numbers.
+
+let reviewingDocumentId = null;
+let reviewItems = [];
+let reviewProductsCache = null;
+
+function documentLineItemsHtml(d) {
+  let items = [];
+  try { items = JSON.parse(d.line_items || "[]"); } catch { items = []; }
+  if (!items.length) return "";
+
+  if (d.applied) {
+    return `<p class="text-xs text-primary-dark bg-primary-light rounded-full px-3 py-1.5 inline-block">✓ ${items.length} item${items.length === 1 ? "" : "s"} already applied to stock</p>`;
+  }
+
+  const directionLabel = d.direction === "sale" ? "sale" : "purchase";
+  return `
+    <button onclick="toggleReviewItems(${d.id})" class="text-xs bg-amber-light text-amber-dark font-semibold px-3 py-1.5 rounded-full">
+      Review ${items.length} item${items.length === 1 ? "" : "s"} found (looks like a ${directionLabel})
+    </button>
+    ${reviewingDocumentId === d.id ? renderReviewItemsHtml(d.direction) : ""}
+  `;
+}
+
+function guessProductMatch(description) {
+  if (!reviewProductsCache) return null;
+  const desc = description.toLowerCase().trim();
+  let match = reviewProductsCache.find((p) => p.name.toLowerCase() === desc);
+  if (!match) match = reviewProductsCache.find((p) => desc.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(desc));
+  return match ? match.id : null;
+}
+
+async function toggleReviewItems(id) {
+  if (reviewingDocumentId === id) {
+    reviewingDocumentId = null;
+    render();
+    return;
+  }
+  const doc = cachedDocuments.find((d) => d.id === id);
+  if (!doc) return;
+  try { reviewItems = JSON.parse(doc.line_items || "[]"); } catch { reviewItems = []; }
+  reviewingDocumentId = id;
+
+  if (!reviewProductsCache) {
+    try { reviewProductsCache = await Api.getProducts(""); } catch { reviewProductsCache = []; }
+  }
+  render();
+}
+
+function renderReviewItemsHtml(direction) {
+  if (!reviewProductsCache) return `<p class="text-xs text-ink/40 py-2">Loading products…</p>`;
+  const defaultDirection = direction === "sale" ? "sale" : "purchase";
+  return `
+    <div class="mt-2 space-y-3 bg-black/5 rounded-xl p-3">
+      ${reviewItems.map((item, i) => `
+        <div>
+          <p class="text-xs text-ink/50 mb-1">"${item.description}" on the document</p>
+          <div class="flex items-center gap-2 flex-wrap">
+            <select id="review-product-${i}" class="flex-1 min-w-[140px] border border-black/10 rounded-lg px-2 py-1.5 text-xs bg-white">
+              <option value="">— no match, skip —</option>
+              ${reviewProductsCache.map((p) => `<option value="${p.id}" ${guessProductMatch(item.description) === p.id ? "selected" : ""}>${p.name}</option>`).join("")}
+            </select>
+            <input id="review-qty-${i}" type="number" value="${item.quantity}" class="w-16 border border-black/10 rounded-lg px-2 py-1.5 text-xs" />
+            <select id="review-direction-${i}" class="border border-black/10 rounded-lg px-2 py-1.5 text-xs bg-white">
+              <option value="purchase" ${defaultDirection === "purchase" ? "selected" : ""}>+ Add stock</option>
+              <option value="sale" ${defaultDirection === "sale" ? "selected" : ""}>− Sell</option>
+            </select>
+          </div>
+        </div>
+      `).join("")}
+      <button onclick="applyReviewedItems(${reviewingDocumentId})" class="w-full bg-primary text-white text-xs font-semibold py-2 rounded-lg">Apply to stock</button>
+    </div>
+  `;
+}
+
+async function applyReviewedItems(documentId) {
+  let appliedCount = 0;
+  let skippedCount = 0;
+
+  for (let i = 0; i < reviewItems.length; i++) {
+    const productSelect = document.getElementById(`review-product-${i}`);
+    const qtyInput = document.getElementById(`review-qty-${i}`);
+    const directionSelect = document.getElementById(`review-direction-${i}`);
+    if (!productSelect || !productSelect.value) { skippedCount++; continue; }
+    const productId = Number(productSelect.value);
+    const quantity = parseInt(qtyInput.value);
+    if (!quantity || quantity <= 0) { skippedCount++; continue; }
+
+    try {
+      if (directionSelect.value === "sale") await Api.sell(productId, quantity);
+      else await Api.addStock(productId, quantity, 0, "", "From uploaded document");
+      appliedCount++;
+    } catch {
+      skippedCount++;
+    }
+  }
+
+  try { await Api.markDocumentApplied(documentId); } catch {}
+  reviewingDocumentId = null;
+  reviewProductsCache = null;
+  toast(`Applied ${appliedCount} item${appliedCount === 1 ? "" : "s"} to stock${skippedCount ? `, skipped ${skippedCount}` : ""}`);
+  render();
 }
 
 async function sendAIMessage() {
