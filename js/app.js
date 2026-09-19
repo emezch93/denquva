@@ -422,6 +422,14 @@ const Api = {
     });
     return apiJson(res);
   },
+
+  async smartMapImport(import_type, headers, sample_rows) {
+    const res = await authFetch(`${API_BASE}/api/import/smart-map`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ import_type, headers, sample_rows }),
+    });
+    return apiJson(res);
+  },
 };
 
 // ---------------- APP STATE & ROUTING ----------------
@@ -1668,6 +1676,14 @@ async function ViewSettings() {
       <input id="import-file" type="file" accept=".csv,.xlsx,.xls" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
       <p class="text-xs text-ink/40 mb-2">First row must be column headers matching the names above. Products import creates new products, it won't update existing ones. Sales import logs history without changing current stock. Stock import adds to current stock, same as Add Stock.</p>
       <button onclick="runBulkImport()" class="w-full bg-amber text-white font-semibold py-2.5 rounded-xl">Import file</button>
+
+      <div class="border-t border-black/5 mt-4 pt-4">
+        <p class="text-sm font-medium mb-1">File in a different format?</p>
+        <p class="text-xs text-ink/40 mb-2">Use your own column names, whatever your spreadsheet already has, and the AI will figure out how they line up. You'll get a chance to review before anything is imported.</p>
+        <input id="smart-import-file" type="file" accept=".csv,.xlsx,.xls" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
+        <button onclick="runSmartImport()" class="w-full bg-primary-light text-primary-dark font-semibold py-2.5 rounded-xl">Smart import (any format)</button>
+      </div>
+      <div id="smart-import-review"></div>
     </div>
     ` : ""}
 
@@ -1930,6 +1946,145 @@ async function runBulkImport() {
     render();
   } catch (err) {
     toast(err.message || "Could not read that file");
+  }
+}
+
+// ---------------- SMART IMPORT (any column format) ----------------
+// The AI maps unfamiliar column names onto Duka's fields, but nothing
+// gets imported until the shop owner reviews the result and fills in
+// anything that's still missing, the same "propose, don't just do"
+// pattern used everywhere else AI touches real data in this app.
+
+let smartImportState = null;
+
+async function runSmartImport() {
+  const type = document.getElementById("import-type").value;
+  const fileInput = document.getElementById("smart-import-file");
+  const file = fileInput.files[0];
+  if (!file) { toast("Choose a file first"); return; }
+
+  try {
+    const rawRows = await parseFileToRows(file);
+    if (!rawRows.length) { toast("That file has no rows"); return; }
+
+    const headers = Object.keys(rawRows[0]);
+    const sampleRows = rawRows.slice(0, 3);
+    toast("Reading your column headers…");
+    const { mapping, required, identifiers } = await Api.smartMapImport(type, headers, sampleRows);
+
+    const mappedRows = rawRows.map((row) => {
+      const mapped = {};
+      for (const header of headers) {
+        const field = mapping[header];
+        if (field) mapped[field] = row[header];
+      }
+      return mapped;
+    });
+
+    smartImportState = { type, mappedRows, required, identifiers };
+    renderSmartImportReview();
+  } catch (err) {
+    toast(err.message || "Could not read that file");
+  }
+}
+
+function rowMissingFields(row, state) {
+  const missing = [];
+  for (const field of state.required) {
+    if (row[field] === undefined || row[field] === "" || row[field] === null) missing.push(field);
+  }
+  if (state.identifiers && !state.identifiers.some((f) => row[f] !== undefined && row[f] !== "" && row[f] !== null)) {
+    missing.push(state.identifiers[0]);
+  }
+  return missing;
+}
+
+function renderSmartImportReview() {
+  const container = document.getElementById("smart-import-review");
+  if (!container || !smartImportState) return;
+  const { mappedRows } = smartImportState;
+
+  const neededFields = new Set();
+  mappedRows.forEach((row) => rowMissingFields(row, smartImportState).forEach((f) => neededFields.add(f)));
+
+  if (neededFields.size === 0) {
+    container.innerHTML = `
+      <div class="bg-primary-light text-primary-dark text-sm rounded-xl p-3 mt-3">
+        <p class="mb-2">Matched all ${mappedRows.length} rows.</p>
+        <button onclick="finalizeSmartImport()" class="w-full bg-primary text-white font-semibold py-2 rounded-lg text-sm">Import ${mappedRows.length} rows</button>
+      </div>`;
+    return;
+  }
+
+  const fieldsList = Array.from(neededFields);
+  container.innerHTML = `
+    <div class="bg-amber-light text-amber-dark text-xs rounded-xl p-3 mt-3">
+      <p class="mb-2 font-semibold">Some rows are missing: ${fieldsList.join(", ")}. Fill these in below, or set one value for every row at once.</p>
+      ${fieldsList.map((f) => `
+        <div class="flex items-center gap-2 mb-2">
+          <span class="w-28 flex-shrink-0">${f}</span>
+          <input id="smart-fillall-${f}" placeholder="Apply to all rows" class="flex-1 border border-black/10 rounded-lg px-2 py-1.5 bg-white" />
+          <button onclick="applySmartFillAll('${f}')" class="bg-black/5 px-2 py-1.5 rounded-lg font-semibold">Set all</button>
+        </div>
+      `).join("")}
+    </div>
+    <div class="overflow-x-auto mt-2">
+      <table class="w-full text-xs border-collapse">
+        <thead><tr>
+          <th class="text-left p-1 border-b border-black/10">Row</th>
+          ${fieldsList.map((f) => `<th class="text-left p-1 border-b border-black/10">${f}</th>`).join("")}
+        </tr></thead>
+        <tbody>
+          ${mappedRows.map((row, i) => {
+            const missing = rowMissingFields(row, smartImportState);
+            if (missing.length === 0) return "";
+            const label = row.name || row.product_name || row.sku || `Row ${i + 1}`;
+            return `<tr>
+              <td class="p-1 border-b border-black/5">${label}</td>
+              ${fieldsList.map((f) => `<td class="p-1 border-b border-black/5">
+                ${missing.includes(f) ? `<input id="smart-row-${i}-${f}" class="w-20 border border-black/10 rounded px-1 py-1" />` : `<span class="text-ink/30">—</span>`}
+              </td>`).join("")}
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+    <button onclick="finalizeSmartImport()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-3">Fill in and import</button>
+  `;
+}
+
+function applySmartFillAll(field) {
+  const value = document.getElementById(`smart-fillall-${field}`).value;
+  if (!value) return;
+  smartImportState.mappedRows.forEach((row) => { row[field] = value; });
+  renderSmartImportReview();
+}
+
+async function finalizeSmartImport() {
+  if (!smartImportState) return;
+  const { mappedRows, type } = smartImportState;
+
+  mappedRows.forEach((row, i) => {
+    rowMissingFields(row, smartImportState).forEach((f) => {
+      const input = document.getElementById(`smart-row-${i}-${f}`);
+      if (input && input.value) row[f] = input.value;
+    });
+  });
+
+  try {
+    let result;
+    if (type === "products") result = await Api.importProducts(mappedRows);
+    else if (type === "sales") result = await Api.importSales(mappedRows);
+    else result = await Api.importStock(mappedRows);
+
+    toast(`Imported ${result.imported}, skipped ${result.skipped}${result.errors.length ? " (see console for details)" : ""}`);
+    if (result.errors.length) console.warn("Smart import issues:", result.errors);
+    smartImportState = null;
+    document.getElementById("smart-import-review").innerHTML = "";
+    document.getElementById("smart-import-file").value = "";
+    render();
+  } catch (err) {
+    toast(err.message || "Import failed");
   }
 }
 
