@@ -867,6 +867,7 @@ let productSearchTerm = "";
 
 async function ViewProducts() {
   const products = await Api.getProducts(productSearchTerm);
+  cachedProducts = products;
   const cards = products.length
     ? products.map(productCard).join("")
     : `<div class="text-center py-16 text-ink/40">No products yet. Add your first one.</div>`;
@@ -915,7 +916,7 @@ function productCard(p) {
 }
 
 function openProductForm(id) {
-  const product = id ? sampleProducts.find(p => p.id === id) : null;
+  const product = id ? cachedProducts.find(p => p.id === id) : null;
   pendingProductImage = product?.image_url || null;
   const modal = document.getElementById("product-modal");
   document.getElementById("product-modal-body").innerHTML = `
@@ -1028,7 +1029,7 @@ function openSellModal(productId) {
 }
 
 function renderSellModal(productId) {
-  const p = sampleProducts.find(p => p.id === productId);
+  const p = cachedProducts.find(p => p.id === productId);
   document.getElementById("sell-modal-body").innerHTML = `
     <h2 class="font-display text-xl font-extrabold mb-1">${p.name}</h2>
     <p class="text-sm text-ink/50 mb-4">${p.quantity} units available · ${formatMoney(p.selling_price)} each</p>
@@ -1064,7 +1065,7 @@ async function confirmSale(productId) {
 // ---------------- ADD STOCK MODAL ----------------
 
 function openStockModal(productId) {
-  const p = sampleProducts.find(p => p.id === productId);
+  const p = cachedProducts.find(p => p.id === productId);
   document.getElementById("stock-modal-body").innerHTML = `
     <h2 class="font-display text-xl font-extrabold mb-1">Add stock — ${p.name}</h2>
     <p class="text-sm text-ink/50 mb-4">Current stock: ${p.quantity}</p>
@@ -1319,6 +1320,7 @@ async function onDocumentUpload(event) {
 }
 
 let cachedDocuments = [];
+let cachedProducts = [];
 let expandedDocumentId = null;
 let pendingAIQuestion = null;
 
@@ -2115,6 +2117,9 @@ async function saveSettings() {
   try {
     const updated = await Api.updateSettings(data);
     shopSettings = USE_SAMPLE_DATA ? sampleSettings : updated;
+    if (currentShop && String(activeShopId) === String(currentShop.id)) {
+      currentShop.shop_name = data.business_name;
+    }
     pendingLogoDataUrl = null;
     toast("Settings saved");
     render();
