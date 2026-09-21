@@ -1699,14 +1699,16 @@ async function ViewSettings() {
         <option value="sales">Sales history (product_name or sku, quantity, unit_price, unit_cost, sold_at)</option>
         <option value="stock">Stock additions (product_name or sku, quantity_change, note)</option>
       </select>
-      <input id="import-file" type="file" accept=".csv,.xlsx,.xls" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
-      <p class="text-xs text-ink/40 mb-2">First row must be column headers matching the names above. Products import creates new products, it won't update existing ones. Sales import logs history without changing current stock. Stock import adds to current stock, same as Add Stock.</p>
+      <input id="import-file" type="file" accept=".csv,.xlsx,.xls" onchange="showFileSelection('import-file')" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
+      <div id="import-file-info"></div>
+      <p class="text-xs text-ink/40 mb-2">First row must be column headers matching the names above. Products import creates new products or updates existing ones matched by SKU or name. Sales import logs history without changing current stock. Stock import adds to current stock, same as Add Stock.</p>
       <button onclick="runBulkImport()" class="w-full bg-amber text-white font-semibold py-2.5 rounded-xl">Import file</button>
 
       <div class="border-t border-black/5 mt-4 pt-4">
         <p class="text-sm font-medium mb-1">File in a different format?</p>
-        <p class="text-xs text-ink/40 mb-2">Use your own column names, whatever your spreadsheet already has, and the AI will figure out how they line up. You'll get a chance to review before anything is imported.</p>
-        <input id="smart-import-file" type="file" accept=".csv,.xlsx,.xls" multiple class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
+        <p class="text-xs text-ink/40 mb-2">Use your own column names, whatever your spreadsheet already has, and the AI will figure out how they line up. You'll get a chance to review before anything is imported. You can select more than one file, they're reviewed and imported one at a time.</p>
+        <input id="smart-import-file" type="file" accept=".csv,.xlsx,.xls" multiple onchange="showFileSelection('smart-import-file')" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
+        <div id="smart-import-file-info"></div>
         <button onclick="runSmartImport()" class="w-full bg-primary-light text-primary-dark font-semibold py-2.5 rounded-xl">Smart import (any format)</button>
       </div>
       <div id="smart-import-review"></div>
@@ -1920,6 +1922,34 @@ const IMPORT_HEADER_ALIASES = {
   note: ["note", "supplier"],
 };
 
+// Shows the file(s) just chosen with a way to cancel, in case the
+// wrong file got selected, without having to hunt for the tiny native
+// file picker's own clear control.
+function showFileSelection(inputId) {
+  const input = document.getElementById(inputId);
+  const info = document.getElementById(`${inputId}-info`);
+  if (!info) return;
+  const files = Array.from(input.files || []);
+  if (!files.length) { info.innerHTML = ""; return; }
+
+  const names = files.map((f) => f.name).join(", ");
+  info.innerHTML = `
+    <div class="flex items-center justify-between gap-2 bg-black/5 rounded-lg px-3 py-2 mb-2 text-xs">
+      <span class="truncate">${names}</span>
+      <button onclick="clearFileSelection('${inputId}')" class="flex-shrink-0 w-5 h-5 rounded-full bg-black/10 hover:bg-black/20 font-bold" title="Remove selected file">✕</button>
+    </div>`;
+}
+
+function clearFileSelection(inputId) {
+  const input = document.getElementById(inputId);
+  input.value = "";
+  document.getElementById(`${inputId}-info`).innerHTML = "";
+  if (inputId === "smart-import-file") {
+    smartImportQueue = [];
+    smartImportTotalFiles = 0;
+  }
+}
+
 function mapImportRow(row, fields) {
   const lowerRow = {};
   for (const key in row) lowerRow[key.trim().toLowerCase()] = row[key];
@@ -1966,6 +1996,7 @@ async function runBulkImport() {
     toast(`${summary}${result.errors.length ? " (see console for details)" : ""}`);
     if (result.errors.length) console.warn("Import issues:", result.errors);
     fileInput.value = "";
+    document.getElementById("import-file-info").innerHTML = "";
     render();
   } catch (err) {
     toast(err.message || "Could not read that file");
@@ -2140,6 +2171,7 @@ async function finalizeSmartImport() {
     smartImportTotalFiles = 0;
     document.getElementById("smart-import-review").innerHTML = "";
     document.getElementById("smart-import-file").value = "";
+    document.getElementById("smart-import-file-info").innerHTML = "";
     render();
   } catch (err) {
     toast(err.message || "Import failed");
