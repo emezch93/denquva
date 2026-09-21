@@ -1,16 +1,34 @@
-const CACHE_NAME = "duka-shell-v5";
+const CACHE_NAME = "duka-shell-v6";
 const SHELL_FILES = [
   "./",
-  "index.html",
+  "./index.html",
   "./css/app.css",
   "./js/app.js",
-  "manifest.json",
+  "./manifest.json",
 ];
+function stripRedirect(response) {
+  if (response && response.redirected) {
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+  return response;
+}
+
+async function cacheShell(cache) {
+  await Promise.all(
+    SHELL_FILES.map(async (file) => {
+      const response = await fetch(file, { redirect: "follow" });
+      const clean = stripRedirect(response);
+      await cache.put(file, clean);
+    })
+  );
+}
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_FILES))
-  );
+  event.waitUntil(caches.open(CACHE_NAME).then(cacheShell));
   self.skipWaiting();
 });
 
@@ -31,6 +49,9 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.startsWith("/api/")) return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    caches.match(event.request).then((cached) => {
+      if (cached) return cached;
+      return fetch(event.request).then((response) => stripRedirect(response));
+    })
   );
 });
