@@ -1,10 +1,10 @@
 const CACHE_NAME = "duka-shell-v5";
 const SHELL_FILES = [
   "./",
-  "./index.html",
+  "index.html",
   "./css/app.css",
   "./js/app.js",
-  "./manifest.json",
+  "manifest.json",
 ];
 
 self.addEventListener("install", (event) => {
