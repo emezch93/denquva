@@ -801,6 +801,30 @@ async function refreshSession() {
 
 // ---------------- DASHBOARD VIEW ----------------
 
+// Always visible in Settings, unlike the trial banner (which only
+// covers the trial-to-active transition), so a subscribed owner has a
+// permanent place that confirms they're paid up, billed quarterly.
+function subscriptionCardHtml() {
+  const status = currentShop?.subscription_status;
+  if (status === "active") {
+    return `
+    <div class="card p-4 mt-4">
+      <h2 class="font-display font-bold mb-1">Subscription</h2>
+      <p class="text-sm text-ink/50 mb-3">Billed quarterly.</p>
+      <button disabled class="w-full bg-primary-light text-primary-dark font-semibold py-2.5 rounded-xl cursor-default">Subscribed</button>
+    </div>`;
+  }
+  const message = status === "trial"
+    ? "You're on the free trial. Subscribe anytime to keep going past it."
+    : "Subscribe to keep using Duka.";
+  return `
+    <div class="card p-4 mt-4">
+      <h2 class="font-display font-bold mb-1">Subscription</h2>
+      <p class="text-sm text-ink/50 mb-3">${message}</p>
+      <button onclick="resumePaymentFlow()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Subscribe now</button>
+    </div>`;
+}
+
 function trialBannerHtml() {
   if (USE_SAMPLE_DATA || !currentShop || currentShop.subscription_status !== "trial" || !currentShop.trial_ends_at) return "";
   const daysLeft = Math.max(0, Math.ceil((new Date(currentShop.trial_ends_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
@@ -1682,7 +1706,7 @@ async function ViewSettings() {
       <div class="border-t border-black/5 mt-4 pt-4">
         <p class="text-sm font-medium mb-1">File in a different format?</p>
         <p class="text-xs text-ink/40 mb-2">Use your own column names, whatever your spreadsheet already has, and the AI will figure out how they line up. You'll get a chance to review before anything is imported.</p>
-        <input id="smart-import-file" type="file" accept=".csv,.xlsx,.xls" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
+        <input id="smart-import-file" type="file" accept=".csv,.xlsx,.xls" multiple class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
         <button onclick="runSmartImport()" class="w-full bg-primary-light text-primary-dark font-semibold py-2.5 rounded-xl">Smart import (any format)</button>
       </div>
       <div id="smart-import-review"></div>
@@ -1690,13 +1714,7 @@ async function ViewSettings() {
     ` : ""}
 
     ${!USE_SAMPLE_DATA ? `
-    ${currentShop?.subscription_status === "trial" ? `
-    <div class="card p-4 mt-4">
-      <h2 class="font-display font-bold mb-1">Subscription</h2>
-      <p class="text-sm text-ink/50 mb-3">You're on the free trial. Subscribe anytime to keep going past it.</p>
-      <button onclick="resumePaymentFlow()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Subscribe now</button>
-    </div>
-    ` : ""}
+    ${subscriptionCardHtml()}
     <div class="card p-4 space-y-3 mt-4">
       <h2 class="font-display font-bold">Change password</h2>
       ${passwordFieldHtml("cp-current", "Current password")}
@@ -1942,7 +1960,10 @@ async function runBulkImport() {
       result = await Api.importStock(rows);
     }
 
-    toast(`Imported ${result.imported}, skipped ${result.skipped}${result.errors.length ? " (see console for details)" : ""}`);
+    const summary = type === "products"
+      ? `${result.created} added, ${result.updated} updated, skipped ${result.skipped}`
+      : `Imported ${result.imported}, skipped ${result.skipped}`;
+    toast(`${summary}${result.errors.length ? " (see console for details)" : ""}`);
     if (result.errors.length) console.warn("Import issues:", result.errors);
     fileInput.value = "";
     render();
@@ -1958,20 +1979,40 @@ async function runBulkImport() {
 // pattern used everywhere else AI touches real data in this app.
 
 let smartImportState = null;
+// Each file can have its own column layout, so files are reviewed and
+// imported one at a time, in the order chosen, rather than merging
+// every file's rows into a single mapping.
+let smartImportQueue = [];
+let smartImportTotalFiles = 0;
 
 async function runSmartImport() {
-  const type = document.getElementById("import-type").value;
   const fileInput = document.getElementById("smart-import-file");
-  const file = fileInput.files[0];
-  if (!file) { toast("Choose a file first"); return; }
+  const files = Array.from(fileInput.files || []);
+  if (!files.length) { toast("Choose a file first"); return; }
+
+  smartImportQueue = files;
+  smartImportTotalFiles = files.length;
+  await processNextSmartImportFile();
+}
+
+async function processNextSmartImportFile() {
+  const type = document.getElementById("import-type").value;
+  const file = smartImportQueue.shift();
+  if (!file) return;
 
   try {
     const rawRows = await parseFileToRows(file);
-    if (!rawRows.length) { toast("That file has no rows"); return; }
+    if (!rawRows.length) {
+      toast(`${file.name} has no rows, skipping`);
+      return processNextSmartImportFile();
+    }
 
     const headers = Object.keys(rawRows[0]);
     const sampleRows = rawRows.slice(0, 3);
-    toast("Reading your column headers…");
+    const fileLabel = smartImportTotalFiles > 1
+      ? `Reading ${file.name} (${smartImportTotalFiles - smartImportQueue.length} of ${smartImportTotalFiles})…`
+      : "Reading your column headers…";
+    toast(fileLabel);
     const { mapping, required, identifiers } = await Api.smartMapImport(type, headers, sampleRows);
 
     const mappedRows = rawRows.map((row) => {
@@ -1983,10 +2024,11 @@ async function runSmartImport() {
       return mapped;
     });
 
-    smartImportState = { type, mappedRows, required, identifiers };
+    smartImportState = { type, mappedRows, required, identifiers, fileName: file.name };
     renderSmartImportReview();
   } catch (err) {
-    toast(err.message || "Could not read that file");
+    toast(err.message || `Could not read ${file.name}`);
+    return processNextSmartImportFile();
   }
 }
 
@@ -2009,10 +2051,12 @@ function renderSmartImportReview() {
   const neededFields = new Set();
   mappedRows.forEach((row) => rowMissingFields(row, smartImportState).forEach((f) => neededFields.add(f)));
 
+  const fileTag = smartImportTotalFiles > 1 ? ` from ${smartImportState.fileName}` : "";
+
   if (neededFields.size === 0) {
     container.innerHTML = `
       <div class="bg-primary-light text-primary-dark text-sm rounded-xl p-3 mt-3">
-        <p class="mb-2">Matched all ${mappedRows.length} rows.</p>
+        <p class="mb-2">Matched all ${mappedRows.length} rows${fileTag}.</p>
         <button onclick="finalizeSmartImport()" class="w-full bg-primary text-white font-semibold py-2 rounded-lg text-sm">Import ${mappedRows.length} rows</button>
       </div>`;
     return;
@@ -2079,9 +2123,21 @@ async function finalizeSmartImport() {
     else if (type === "sales") result = await Api.importSales(mappedRows);
     else result = await Api.importStock(mappedRows);
 
-    toast(`Imported ${result.imported}, skipped ${result.skipped}${result.errors.length ? " (see console for details)" : ""}`);
+    const summary = type === "products"
+      ? `${result.created} added, ${result.updated} updated, skipped ${result.skipped}`
+      : `Imported ${result.imported}, skipped ${result.skipped}`;
+    toast(`${summary}${result.errors.length ? " (see console for details)" : ""}`);
     if (result.errors.length) console.warn("Smart import issues:", result.errors);
+
+    if (smartImportQueue.length > 0) {
+      // More files were selected, move straight on to the next one
+      // instead of stopping after the first.
+      document.getElementById("smart-import-review").innerHTML = "";
+      return processNextSmartImportFile();
+    }
+
     smartImportState = null;
+    smartImportTotalFiles = 0;
     document.getElementById("smart-import-review").innerHTML = "";
     document.getElementById("smart-import-file").value = "";
     render();
