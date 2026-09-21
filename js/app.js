@@ -1111,9 +1111,9 @@ const FOOTER_INFO = {
     title: "About Duka",
     body: `Duka is a complete shop management platform for tracking inventory, sales, and profit in real time.
       Add products with photos and pricing, record sales with one tap, and every transaction is logged with a
-      full audit trail. A built-in AI assistant answers business questions, reads uploaded receipts and invoices,
-      and can even help apply what it reads directly to your stock. One account supports multiple shops or
-      branches, each fully independent.`,
+      full audit trail. A built-in AI assistant answers business questions and reads uploaded receipts and
+      invoices to help explain your data. One account supports multiple shops or branches, each fully
+      independent.`,
   },
   support: {
     title: "Support",
