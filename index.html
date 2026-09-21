@@ -9,29 +9,9 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script>
-  tailwind.config = {
-    theme: {
-      extend: {
-        colors: {
-          ink: '#16241D',
-          paper: '#FAF7F1',
-          surface: '#FFFFFF',
-          primary: { DEFAULT: '#0F6B4C', dark: '#0B5038', light: '#E4F1EA' },
-          amber: { DEFAULT: '#E2932E', dark: '#B9721B', light: '#FBEBD3' },
-          danger: { DEFAULT: '#C1443C', light: '#F8E2DF' },
-        },
-        fontFamily: {
-          display: ['Manrope', 'sans-serif'],
-          body: ['Inter', 'sans-serif'],
-        },
-      },
-    },
-  };
-</script>
+<link rel="stylesheet" href="css/tailwind.css" />
 <link rel="stylesheet" href="css/app.css" />
 </head>
 <body class="bg-paper text-ink font-body antialiased min-h-screen pb-20 md:pb-0 md:pl-64">
