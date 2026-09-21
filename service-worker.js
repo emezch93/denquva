@@ -1,8 +1,9 @@
-const CACHE_NAME = "duka-shell-v8";
+const CACHE_NAME = "duka-shell-v9";
 const SHELL_FILES = [
   "./",
   "./index.html",
   "./css/app.css",
+  "./css/tailwind.css",
   "./js/app.js",
   "./manifest.json",
 ];
