@@ -96,8 +96,10 @@ let sampleProducts = [
 let sampleSales = [
   { id: 1, product_id: 1, product_name: "Coca Cola", quantity: 3, unit_price: 700, unit_cost: 500, total_amount: 2100, estimated_profit: 600, sold_at: new Date().toISOString() },
 ];
+let sampleCreditSales = [];
 let nextProductId = 5;
 let nextSaleId = 2;
+let nextCreditSaleId = 1;
 let sampleSettings = {
   business_name: "My Shop",
   business_description: "",
@@ -252,6 +254,82 @@ const Api = {
       });
     }
     const res = await authFetch(`${API_BASE}/api/sales?range=${range}`);
+    return apiJson(res);
+  },
+
+  // ---- Credit sales ----
+  async getCreditSales({ search = "", status = "", sort = "date", dir = "desc" } = {}) {
+    if (USE_SAMPLE_DATA) {
+      let rows = sampleCreditSales;
+      if (search) rows = rows.filter(c => c.customer_name.toLowerCase().includes(search.toLowerCase()));
+      if (status) rows = rows.filter(c => c.status === status);
+      const key = { customer: "customer_name", status: "status", date: "purchase_date", outstanding: "outstanding_amount" }[sort] || "purchase_date";
+      rows = [...rows].sort((a, b) => {
+        const cmp = a[key] > b[key] ? 1 : a[key] < b[key] ? -1 : 0;
+        return dir === "asc" ? cmp : -cmp;
+      });
+      return rows;
+    }
+    const params = new URLSearchParams({ search, status, sort, dir });
+    const res = await authFetch(`${API_BASE}/api/credit-sales?${params.toString()}`);
+    return apiJson(res);
+  },
+
+  async createCreditSale(data) {
+    if (USE_SAMPLE_DATA) {
+      let subtotal = 0;
+      const items = [];
+      for (const it of data.items) {
+        const p = sampleProducts.find(p => p.id === it.product_id);
+        if (!p) throw new Error("Product not found");
+        if (p.quantity < it.quantity) throw new Error(`Only ${p.quantity} units of ${p.name} are available.`);
+        p.quantity -= it.quantity;
+        const lineTotal = p.selling_price * it.quantity;
+        subtotal += lineTotal;
+        items.push({ product_id: p.id, product_name: p.name, quantity: it.quantity, unit_price: p.selling_price, line_total: lineTotal });
+      }
+      const totalPrice = Math.max(0, subtotal - (Number(data.discount) || 0));
+      const record = {
+        id: nextCreditSaleId++, customer_name: data.customer_name, discount: Number(data.discount) || 0,
+        total_price: totalPrice, outstanding_amount: totalPrice, status: "pending",
+        purchase_date: data.purchase_date || new Date().toISOString(), items,
+      };
+      sampleCreditSales.unshift(record);
+      return record;
+    }
+    const res = await authFetch(`${API_BASE}/api/credit-sales`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+    });
+    return apiJson(res);
+  },
+
+  async markCreditSalesPaid(ids) {
+    if (USE_SAMPLE_DATA) {
+      const updated = [];
+      for (const id of ids) {
+        const sale = sampleCreditSales.find(c => c.id === id);
+        if (!sale || sale.status === "paid") continue;
+        sale.status = "paid";
+        sale.outstanding_amount = 0;
+        const subtotal = sale.items.reduce((s, i) => s + i.line_total, 0);
+        const ratio = subtotal > 0 ? sale.total_price / subtotal : 1;
+        for (const item of sale.items) {
+          const p = sampleProducts.find(p => p.id === item.product_id);
+          const unitCost = p ? p.cost_price : 0;
+          const amount = item.line_total * ratio;
+          sampleSales.unshift({
+            id: nextSaleId++, product_id: item.product_id, product_name: item.product_name, quantity: item.quantity,
+            unit_price: item.unit_price, unit_cost: unitCost, total_amount: amount,
+            estimated_profit: amount - unitCost * item.quantity, sold_at: sale.purchase_date,
+          });
+        }
+        updated.push(id);
+      }
+      return { updated, skipped: [] };
+    }
+    const res = await authFetch(`${API_BASE}/api/credit-sales/mark-paid`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }),
+    });
     return apiJson(res);
   },
 
@@ -482,6 +560,7 @@ const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "📊", hint: "Today's sales, revenue, and low stock at a glance" },
   { id: "products", label: "Products", icon: "🛒", hint: "Add, edit, sell, and restock your products" },
   { id: "sales", label: "Sales", icon: "🧾", hint: "Your sales history and estimated profit" },
+  { id: "credit", label: "Credit Sales", icon: "🤝", hint: "Products given on credit, and who still owes you" },
   { id: "ai", label: "AI Assistant", icon: "✨", hint: "Ask questions about your business, by typing or speaking" },
   { id: "settings", label: "Settings", icon: "⚙️", hint: "Shop name, logo, currency, password, and subscription" },
 ];
@@ -628,6 +707,7 @@ async function render() {
     if (currentView === "dashboard") app.innerHTML = await ViewDashboard();
     if (currentView === "products") app.innerHTML = await ViewProducts();
     if (currentView === "sales") app.innerHTML = await ViewSales();
+    if (currentView === "credit") app.innerHTML = await ViewCredit();
     if (currentView === "ai") {
       app.innerHTML = await ViewAI();
       if (pendingAIQuestion) {
@@ -1132,6 +1212,16 @@ async function confirmSale(productId) {
     toast(err.message);
   }
 }
+
+// ---------------- MULTI SALE MODAL ----------------
+// Lets a cashier ring up a whole basket, several products in one
+// session, instead of opening the single Sell modal once per item.
+// The cart lives entirely in memory until "Confirm Sale", nothing is
+// written to inventory or sales until that one tap, then everything
+// (stock, sales records, today's totals) updates in a single batch
+// request, going through the exact same stock check and audit trail
+// as a normal single sale, just looped server side.
+
 let multiSaleCart = new Map(); // product_id -> quantity
 let multiSaleProducts = [];
 let multiSaleTopProducts = [];
@@ -1340,6 +1430,12 @@ async function confirmAddStock(productId) {
 function closeModal(id) {
   document.getElementById(id).classList.add("hidden");
 }
+
+// ---------------- FOOTER INFO ----------------
+// Placeholder copy for About/Support/Privacy/Terms. The privacy and
+// terms text especially should be reviewed by a lawyer before this is
+// relied on as an actual legal policy, this is a reasonable starting
+// draft, not legal advice.
 const FOOTER_INFO = {
   about: {
     title: "About Duka",
@@ -1427,7 +1523,269 @@ async function ViewSales() {
   `;
 }
 
-// ---------------- AI ASSISTANT VIEW ----------------
+// ---------------- CREDIT SALES VIEW ----------------
+
+let creditSearchTerm = "";
+let creditStatusFilter = ""; // "", "pending", "paid"
+let creditSortKey = "date";
+let creditSortDir = "desc";
+let creditSelected = new Set();
+
+async function ViewCredit() {
+  const sales = await Api.getCreditSales({ search: creditSearchTerm, status: creditStatusFilter, sort: creditSortKey, dir: creditSortDir });
+  const totalOutstanding = sales.filter(s => s.status === "pending").reduce((a, s) => a + s.outstanding_amount, 0);
+  // Drop selections for anything no longer visible or no longer pending
+  // (e.g. paid by someone else since the last render).
+  creditSelected = new Set([...creditSelected].filter(id => sales.some(s => s.id === id && s.status === "pending")));
+
+  const statusTabs = [["", "All"], ["pending", "Pending"], ["paid", "Paid"]].map(([key, label]) => `
+    <button onclick="creditStatusFilter='${key}'; render()" class="px-3 py-1.5 rounded-full text-sm font-medium ${creditStatusFilter === key ? "bg-primary text-white" : "bg-surface border border-black/10"}">${label}</button>
+  `).join("");
+
+  const sortOptions = [["date", "Date"], ["customer", "Customer"], ["status", "Status"], ["outstanding", "Outstanding"]]
+    .map(([key, label]) => `<option value="${key}" ${creditSortKey === key ? "selected" : ""}>${label}</option>`).join("");
+
+  const rows = sales.length ? sales.map(s => {
+    const itemsSummary = (s.items || []).map(i => `${i.product_name} x${i.quantity}`).join(", ");
+    return `
+    <div class="flex items-start gap-3 py-3 border-b border-black/5 last:border-0">
+      ${s.status === "pending"
+        ? `<input type="checkbox" class="mt-1.5" ${creditSelected.has(s.id) ? "checked" : ""} onchange="toggleCreditSelect(${s.id}, this.checked)" />`
+        : `<div class="w-4"></div>`}
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2">
+          <div class="font-medium truncate">${s.customer_name}</div>
+          <span class="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${s.status === "paid" ? "bg-primary-light text-primary-dark" : "bg-amber-light text-amber-dark"}">${s.status === "paid" ? "Paid" : "Pending"}</span>
+        </div>
+        <div class="text-xs text-ink/45 truncate">${itemsSummary}</div>
+        <div class="text-xs text-ink/45">${new Date(s.purchase_date).toLocaleString()}${s.discount > 0 ? ` · ${formatMoney(s.discount)} discount` : ""}</div>
+      </div>
+      <div class="text-right flex-shrink-0">
+        <div class="font-semibold">${formatMoney(s.total_price)}</div>
+        ${s.status === "pending" ? `<div class="text-xs text-danger">${formatMoney(s.outstanding_amount)} owed</div>` : `<div class="text-xs text-primary">Settled</div>`}
+      </div>
+    </div>`;
+  }).join("") : `<div class="text-center py-12 text-ink/40">No credit sales${creditSearchTerm ? ` matching "${creditSearchTerm}"` : ""}.</div>`;
+
+  return `
+    <div class="flex items-center justify-between mb-4 gap-2">
+      <h1 class="font-display text-2xl font-extrabold hidden md:block">Credit Sales</h1>
+      <button onclick="openCreditSaleModal()" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full text-sm whitespace-nowrap">+ New Credit Sale</button>
+    </div>
+
+    <div class="stat-card mb-4">
+      <div class="text-xs text-ink/50">Total outstanding</div>
+      <div class="font-display text-xl font-extrabold text-danger">${formatMoney(totalOutstanding)}</div>
+    </div>
+
+    <input type="text" placeholder="Search by customer" value="${creditSearchTerm}"
+      oninput="creditSearchTerm = this.value; render()"
+      class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-3" />
+
+    <div class="flex items-center justify-between gap-2 mb-3 flex-wrap">
+      <div class="flex gap-2">${statusTabs}</div>
+      <div class="flex items-center gap-1">
+        <select onchange="creditSortKey=this.value; render()" class="border border-black/10 rounded-lg px-2 py-1.5 text-sm">${sortOptions}</select>
+        <button onclick="creditSortDir = creditSortDir === 'asc' ? 'desc' : 'asc'; render()" class="border border-black/10 rounded-lg px-2 py-1.5 text-sm" title="Toggle sort direction">${creditSortDir === "asc" ? "↑" : "↓"}</button>
+      </div>
+    </div>
+
+    ${creditSelected.size > 0 ? `
+    <div class="bg-primary-light text-primary-dark rounded-xl p-3 mb-3 flex items-center justify-between">
+      <span class="text-sm font-medium">${creditSelected.size} selected</span>
+      <button onclick="markSelectedCreditPaid()" class="bg-primary text-white text-sm font-semibold px-3 py-1.5 rounded-full">Mark as Paid</button>
+    </div>` : ""}
+
+    <div class="card p-4">${rows}</div>
+  `;
+}
+
+function toggleCreditSelect(id, checked) {
+  if (checked) creditSelected.add(id);
+  else creditSelected.delete(id);
+  render();
+}
+
+async function markSelectedCreditPaid() {
+  if (creditSelected.size === 0) return;
+  const ids = [...creditSelected];
+  try {
+    const result = await Api.markCreditSalesPaid(ids);
+    toast(`Marked ${result.updated.length} as paid${result.skipped.length ? `, ${result.skipped.length} skipped` : ""}`);
+    creditSelected = new Set();
+    render();
+  } catch (err) {
+    toast(err.message || "Could not update those credit sales");
+  }
+}
+
+// ---- New Credit Sale modal ----
+// Reuses the same cart pattern as Multi Sale (search, add, quantity
+// steppers, review list), with a customer name and a discount added on
+// top, since a credit sale is a Multi Sale where payment is deferred.
+
+let creditSaleCart = new Map(); // product_id -> quantity
+let creditSaleProducts = [];
+let creditSaleSearchTerm = "";
+let creditSaleCustomerName = "";
+let creditSaleDiscount = 0;
+
+async function openCreditSaleModal() {
+  creditSaleCart = new Map();
+  creditSaleSearchTerm = "";
+  creditSaleCustomerName = "";
+  creditSaleDiscount = 0;
+  try {
+    creditSaleProducts = await Api.getProducts("");
+  } catch (err) {
+    toast(err.message || "Could not load products");
+    return;
+  }
+  renderCreditSaleModal();
+  document.getElementById("creditsale-modal").classList.remove("hidden");
+}
+
+function creditSaleFilteredProducts() {
+  const term = creditSaleSearchTerm.trim().toLowerCase();
+  if (!term) return creditSaleProducts;
+  return creditSaleProducts.filter(p =>
+    p.name.toLowerCase().includes(term) || (p.sku || "").toLowerCase().includes(term) || (p.category || "").toLowerCase().includes(term)
+  );
+}
+
+function renderCreditSaleModal() {
+  const filtered = creditSaleFilteredProducts();
+  const cartCount = creditSaleCart.size;
+  const subtotal = [...creditSaleCart.entries()].reduce((sum, [id, qty]) => {
+    const p = creditSaleProducts.find(p => p.id === id);
+    return sum + (p ? p.selling_price * qty : 0);
+  }, 0);
+  const total = Math.max(0, subtotal - (Number(creditSaleDiscount) || 0));
+
+  const productListHtml = filtered.length
+    ? filtered.map(p => {
+        const inCart = creditSaleCart.has(p.id);
+        const outOfStock = p.quantity <= 0;
+        return `
+        <div class="flex items-center justify-between gap-2 py-2 border-b border-black/5 last:border-0">
+          <div class="min-w-0">
+            <div class="font-medium truncate">${p.name}</div>
+            <div class="text-xs text-ink/45">${formatMoney(p.selling_price)} · ${p.quantity} available</div>
+          </div>
+          <button onclick="addToCreditSaleCart(${p.id})" ${outOfStock ? "disabled" : ""}
+            class="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full ${inCart ? "bg-primary-light text-primary-dark" : outOfStock ? "bg-black/5 text-ink/30" : "bg-primary text-white"}">
+            ${outOfStock ? "Out of stock" : inCart ? "Added" : "+ Add"}
+          </button>
+        </div>`;
+      }).join("")
+    : `<div class="text-sm text-ink/40 py-4 text-center">No products match "${creditSaleSearchTerm}"</div>`;
+
+  const cartHtml = cartCount
+    ? [...creditSaleCart.entries()].map(([id, qty]) => {
+        const p = creditSaleProducts.find(p => p.id === id);
+        if (!p) return "";
+        return `
+        <div class="flex items-center justify-between gap-2 py-2 border-b border-black/5 last:border-0">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium truncate">${p.name}</div>
+            <div class="text-xs text-ink/45">${formatMoney(p.selling_price * qty)}</div>
+          </div>
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <div class="qty-btn" onclick="changeCreditSaleQty(${id}, -1)">−</div>
+            <div class="w-6 text-center font-semibold">${qty}</div>
+            <div class="qty-btn" onclick="changeCreditSaleQty(${id}, 1)">+</div>
+            <button onclick="removeFromCreditSaleCart(${id})" class="text-danger text-sm px-1" title="Remove">✕</button>
+          </div>
+        </div>`;
+      }).join("")
+    : `<div class="text-sm text-ink/40 py-3 text-center">No items selected yet</div>`;
+
+  document.getElementById("creditsale-modal-body").innerHTML = `
+    <h2 class="font-display text-xl font-extrabold mb-3">New Credit Sale</h2>
+
+    <input type="text" placeholder="Customer name" value="${creditSaleCustomerName}"
+      oninput="creditSaleCustomerName = this.value"
+      class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
+
+    <input id="creditsale-search" type="text" placeholder="Search products to add"
+      value="${creditSaleSearchTerm}"
+      oninput="creditSaleSearchTerm = this.value; renderCreditSaleModal()"
+      class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
+
+    <div class="max-h-40 overflow-y-auto border border-black/5 rounded-xl px-3 mb-4">${productListHtml}</div>
+
+    <div class="border-t border-black/10 pt-3 mb-3">
+      <h3 class="font-display font-bold mb-2">Items (${cartCount})</h3>
+      <div class="max-h-40 overflow-y-auto">${cartHtml}</div>
+    </div>
+
+    <div class="flex items-center justify-between gap-2 mb-1 text-sm">
+      <span class="text-ink/50">Subtotal</span>
+      <span>${formatMoney(subtotal)}</span>
+    </div>
+    <div class="flex items-center justify-between gap-2 mb-3">
+      <label class="text-sm text-ink/50">Discount</label>
+      <input type="number" min="0" step="any" value="${creditSaleDiscount}"
+        oninput="creditSaleDiscount = this.value; renderCreditSaleModal()"
+        class="w-28 border border-black/10 rounded-lg px-2 py-1.5 text-right" />
+    </div>
+    <div class="flex items-center justify-between gap-2 mb-4">
+      <span class="font-display font-bold">Total (owed)</span>
+      <span class="font-display font-bold text-lg">${formatMoney(total)}</span>
+    </div>
+
+    <div class="flex gap-2">
+      <button onclick="closeModal('creditsale-modal')" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
+      <button onclick="confirmCreditSale()" ${cartCount ? "" : "disabled"} class="flex-1 py-2.5 rounded-xl font-semibold ${cartCount ? "bg-primary text-white" : "bg-black/10 text-ink/30"}">Record Sale</button>
+    </div>
+  `;
+
+  const searchInput = document.getElementById("creditsale-search");
+  if (searchInput && document.activeElement === document.body) searchInput.focus();
+}
+
+function addToCreditSaleCart(productId) {
+  const p = creditSaleProducts.find(p => p.id === productId);
+  if (!p || p.quantity <= 0) return;
+  const current = creditSaleCart.get(productId) || 0;
+  if (current >= p.quantity) { toast(`Only ${p.quantity} units of ${p.name} available`); return; }
+  creditSaleCart.set(productId, current + 1);
+  renderCreditSaleModal();
+}
+
+function changeCreditSaleQty(productId, delta) {
+  const p = creditSaleProducts.find(p => p.id === productId);
+  const current = creditSaleCart.get(productId) || 0;
+  const next = current + delta;
+  if (next <= 0) { creditSaleCart.delete(productId); }
+  else if (p && next > p.quantity) { toast(`Only ${p.quantity} units of ${p.name} available`); return; }
+  else { creditSaleCart.set(productId, next); }
+  renderCreditSaleModal();
+}
+
+function removeFromCreditSaleCart(productId) {
+  creditSaleCart.delete(productId);
+  renderCreditSaleModal();
+}
+
+async function confirmCreditSale() {
+  if (creditSaleCart.size === 0) return;
+  const customerName = creditSaleCustomerName.trim();
+  if (!customerName) { toast("Enter the customer's name"); return; }
+
+  const items = [...creditSaleCart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
+
+  try {
+    await Api.createCreditSale({ customer_name: customerName, items, discount: Number(creditSaleDiscount) || 0 });
+    closeModal("creditsale-modal");
+    toast(`Credit sale recorded for ${customerName}`);
+    render();
+  } catch (err) {
+    toast(err.message || "Could not record that credit sale");
+  }
+}
+
+
 
 let aiMessages = [
   { role: "assistant", text: "Ask me things like \"what did I sell today\" or \"which products are running low\". You can type or tap the mic to speak." },
@@ -1594,6 +1952,12 @@ async function deleteDocumentFlow(id) {
     toast(err.message);
   }
 }
+
+// ---------------- APPLY DOCUMENT ITEMS TO STOCK ----------------
+// Extracted line items are always shown for review, never applied
+// automatically, a misread quantity should never silently corrupt
+// real stock numbers.
+
 let reviewingDocumentId = null;
 let reviewItems = [];
 let reviewProductsCache = null;
@@ -1717,6 +2081,9 @@ async function sendAIMessage() {
   }
   await typeOutMessage(replyIndex, answer);
 }
+
+// Reveals the AI's reply a few characters at a time so it reads like
+// it is being typed live, instead of the full answer appearing at once.
 function typeOutMessage(index, fullText) {
   return new Promise((resolve) => {
     const bubble = document.querySelector(`[data-msg-index="${index}"]`);
@@ -1734,6 +2101,10 @@ function typeOutMessage(index, fullText) {
     }, 15);
   });
 }
+
+// Records real audio and sends it to Gemini to transcribe, an actual
+// AI feature rather than the browser's own built in speech engine.
+// Falls back gracefully where microphone access isn't available.
 let mediaRecorder = null;
 let recordedChunks = [];
 
@@ -2100,6 +2471,9 @@ function parseFileToRows(file) {
     }
   });
 }
+
+// Column names in the file can vary a bit, this maps common
+// alternatives onto the fields the Worker actually expects.
 const IMPORT_HEADER_ALIASES = {
   product_name: ["product_name", "product", "name"],
   sku: ["sku"],
@@ -2115,6 +2489,10 @@ const IMPORT_HEADER_ALIASES = {
   sold_at: ["sold_at", "date"],
   note: ["note", "supplier"],
 };
+
+// Shows the file(s) just chosen with a way to cancel, in case the
+// wrong file got selected, without having to hunt for the tiny native
+// file picker's own clear control.
 function showFileSelection(inputId) {
   const input = document.getElementById(inputId);
   const info = document.getElementById(`${inputId}-info`);
@@ -2192,7 +2570,17 @@ async function runBulkImport() {
     toast(err.message || "Could not read that file");
   }
 }
+
+// ---------------- SMART IMPORT (any column format) ----------------
+// The AI maps unfamiliar column names onto Duka's fields, but nothing
+// gets imported until the shop owner reviews the result and fills in
+// anything that's still missing, the same "propose, don't just do"
+// pattern used everywhere else AI touches real data in this app.
+
 let smartImportState = null;
+// Each file can have its own column layout, so files are reviewed and
+// imported one at a time, in the order chosen, rather than merging
+// every file's rows into a single mapping.
 let smartImportQueue = [];
 let smartImportTotalFiles = 0;
 
