@@ -3,8 +3,45 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<title>Duka Shop Manager</title>
+<title>Duka Shop Manager by CodeVent Digital — Inventory & Sales App for businesses</title>
+<meta name="description" content="Duka Shop Manager, built by CodeVent Digital, helps business owners track products, inventory, sales, and profit, with an AI assistant that reads and explains your business data. Works offline, installs like a native app." />
 <meta name="theme-color" content="#0F6B4C" />
+<!-- Update this one line when dukashopmanager.com goes live: change the
+     domain below, and set up a 301 redirect from pages.dev/workers.dev
+     to it at the same time. Hardcoded on purpose, not derived from
+     window.location, so every mirror of this site (pages.dev,
+     workers.dev, the eventual custom domain) points Google at the
+     same single canonical URL instead of each one claiming itself. -->
+<link rel="canonical" href="https://dukashopmanager.pages.dev/" />
+
+<!-- Open Graph / social sharing previews -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="CodeVent Digital" />
+<meta property="og:title" content="Duka Shop Manager by CodeVent Digital" />
+<meta property="og:description" content="Track products, inventory, sales, and profit, with an AI assistant that explains your business data. Built by CodeVent Digital." />
+<meta property="og:url" content="https://dukashopmanager.pages.dev/" />
+<meta property="og:image" content="https://dukashopmanager.pages.dev/icons/icon-512.png" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Duka Shop Manager by CodeVent Digital" />
+<meta name="twitter:description" content="Track products, inventory, sales, and profit, with an AI assistant that explains your business data." />
+<meta name="twitter:image" content="https://dukashopmanager.pages.dev/icons/icon-512.png" />
+
+<!-- Tells Google this is a distinct product by CodeVent Digital, not a
+     generic "duka" (Swahili for "shop") listing. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Duka Shop Manager",
+  "alternateName": "Duka",
+  "applicationCategory": "BusinessApplication",
+  "operatingSystem": "Web, Android, iOS",
+  "description": "Track products, inventory, sales, and profit, with an AI assistant that reads and explains your business data.",
+  "url": "https://dukashopmanager.pages.dev/",
+  "creator": { "@type": "Organization", "name": "CodeVent Digital", "url": "https://codeventdigital.site" },
+  "publisher": { "@type": "Organization", "name": "CodeVent Digital", "url": "https://codeventdigital.site" }
+}
+</script>
 <link rel="manifest" href="manifest.json" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -54,6 +91,11 @@
   <!-- Sell modal -->
   <div id="sell-modal" class="hidden fixed inset-0 z-40 bg-black/40 flex items-end md:items-center justify-center">
     <div class="bg-surface w-full md:max-w-sm rounded-t-3xl md:rounded-3xl p-6" id="sell-modal-body"></div>
+  </div>
+
+  <!-- Multi Sale modal -->
+  <div id="multisale-modal" class="hidden fixed inset-0 z-40 bg-black/40 flex items-end md:items-center justify-center">
+    <div class="bg-surface w-full md:max-w-lg rounded-t-3xl md:rounded-3xl p-6 max-h-[90vh] overflow-y-auto" id="multisale-modal-body"></div>
   </div>
 
   <!-- Add stock modal -->
