@@ -192,6 +192,40 @@ const Api = {
     return apiJson(res);
   },
 
+  // Records a whole cart of products as one checkout. One item failing
+  // (out of stock, etc) never blocks the rest, mirrored here in sample
+  // mode exactly as the backend batch endpoint behaves for real.
+  async sellBatch(items) {
+    if (USE_SAMPLE_DATA) {
+      const succeeded = [];
+      const failed = [];
+      let totalAmount = 0;
+      let totalProfit = 0;
+      for (const item of items) {
+        const p = sampleProducts.find(p => p.id === item.product_id);
+        if (!p) { failed.push({ product_id: item.product_id, reason: "Product not found" }); continue; }
+        if (p.quantity < item.quantity) { failed.push({ product_id: item.product_id, reason: `Only ${p.quantity} units of ${p.name} are available.` }); continue; }
+        p.quantity -= item.quantity;
+        const itemAmount = p.selling_price * item.quantity;
+        const itemProfit = (p.selling_price - p.cost_price) * item.quantity;
+        sampleSales.unshift({
+          id: nextSaleId++, product_id: p.id, product_name: p.name, quantity: item.quantity,
+          unit_price: p.selling_price, unit_cost: p.cost_price,
+          total_amount: itemAmount, estimated_profit: itemProfit, sold_at: new Date().toISOString(),
+        });
+        succeeded.push({ product_id: p.id, product_name: p.name, quantity: item.quantity, new_quantity: p.quantity, total_amount: itemAmount, estimated_profit: itemProfit });
+        totalAmount += itemAmount;
+        totalProfit += itemProfit;
+      }
+      return { succeeded, failed, total_amount: totalAmount, total_profit: totalProfit };
+    }
+    const res = await authFetch(`${API_BASE}/api/sales/batch`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    return apiJson(res);
+  },
+
   async addStock(productId, quantity, costPerUnit, supplier, note) {
     if (USE_SAMPLE_DATA) {
       const p = sampleProducts.find(p => p.id === productId);
@@ -225,6 +259,15 @@ const Api = {
     if (USE_SAMPLE_DATA) {
       const today = new Date().toDateString();
       const todaySales = sampleSales.filter(s => new Date(s.sold_at).toDateString() === today);
+      const thirtyDaysAgo = Date.now() - 30 * 86400000;
+      const tallies = new Map();
+      for (const s of sampleSales) {
+        if (new Date(s.sold_at).getTime() < thirtyDaysAgo) continue;
+        const entry = tallies.get(s.product_id) || { product_id: s.product_id, product_name: s.product_name, units_sold: 0 };
+        entry.units_sold += s.quantity;
+        tallies.set(s.product_id, entry);
+      }
+      const topProducts = [...tallies.values()].sort((a, b) => b.units_sold - a.units_sold).slice(0, 8);
       return {
         total_products: sampleProducts.length,
         total_stock: sampleProducts.reduce((a, p) => a + p.quantity, 0),
@@ -232,6 +275,7 @@ const Api = {
         today_revenue: todaySales.reduce((a, s) => a + s.total_amount, 0),
         low_stock_products: sampleProducts.filter(p => p.quantity <= p.low_stock_threshold),
         recent_sales: sampleSales.slice(0, 10),
+        top_products: topProducts,
       };
     }
     const res = await authFetch(`${API_BASE}/api/dashboard`);
@@ -866,7 +910,7 @@ async function ViewDashboard() {
     ${trialBannerHtml()}
     <div class="flex items-center justify-between mb-5">
       <h1 class="font-display text-2xl font-extrabold hidden md:block">Dashboard</h1>
-      <button onclick="setView('products')" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full text-sm">+ New Sale</button>
+      <button onclick="openMultiSaleModal()" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full text-sm">+ New Sale</button>
     </div>
     <div class="grid grid-cols-2 gap-3 mb-5">
       ${stat("Total Products", d.total_products)}
@@ -904,6 +948,9 @@ async function ViewProducts() {
         oninput="productSearchTerm = this.value; render()"
         class="flex-1 md:flex-none md:w-64 bg-surface border border-black/10 rounded-full px-4 py-2.5 text-sm" />
       <button onclick="openProductForm()" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full text-sm whitespace-nowrap">+ Add</button>
+    </div>
+    <div class="flex justify-end mb-3">
+      <button onclick="openMultiSaleModal()" class="bg-amber text-white font-semibold px-4 py-2 rounded-full text-sm">🛒 Multi Sale</button>
     </div>
     <div class="grid sm:grid-cols-2 gap-3">${cards}</div>
   `;
@@ -1085,6 +1132,175 @@ async function confirmSale(productId) {
     toast(err.message);
   }
 }
+let multiSaleCart = new Map(); // product_id -> quantity
+let multiSaleProducts = [];
+let multiSaleTopProducts = [];
+let multiSaleSearchTerm = "";
+
+async function openMultiSaleModal() {
+  multiSaleCart = new Map();
+  multiSaleSearchTerm = "";
+  try {
+    const [products, dashboard] = await Promise.all([Api.getProducts(""), Api.getDashboard()]);
+    multiSaleProducts = products;
+    multiSaleTopProducts = dashboard.top_products || [];
+  } catch (err) {
+    toast(err.message || "Could not load products");
+    return;
+  }
+  renderMultiSaleModal();
+  document.getElementById("multisale-modal").classList.remove("hidden");
+}
+
+function multiSaleFilteredProducts() {
+  const term = multiSaleSearchTerm.trim().toLowerCase();
+  if (!term) return multiSaleProducts;
+  return multiSaleProducts.filter(p =>
+    p.name.toLowerCase().includes(term) || (p.sku || "").toLowerCase().includes(term) || (p.category || "").toLowerCase().includes(term)
+  );
+}
+
+function renderMultiSaleModal() {
+  const filtered = multiSaleFilteredProducts();
+  const cartCount = multiSaleCart.size;
+  const cartTotal = [...multiSaleCart.entries()].reduce((sum, [id, qty]) => {
+    const p = multiSaleProducts.find(p => p.id === id);
+    return sum + (p ? p.selling_price * qty : 0);
+  }, 0);
+
+  // Frequently sold products not already in the cart, quick tap to add.
+  const suggestionChips = multiSaleTopProducts
+    .filter(tp => tp.product_id && !multiSaleCart.has(tp.product_id) && multiSaleProducts.some(p => p.id === tp.product_id))
+    .slice(0, 6)
+    .map(tp => `<button onclick="addToMultiSaleCart(${tp.product_id})" class="bg-primary-light text-primary-dark text-xs font-semibold px-3 py-1.5 rounded-full whitespace-nowrap">+ ${tp.product_name}</button>`)
+    .join("");
+
+  const productListHtml = filtered.length
+    ? filtered.map(p => {
+        const inCart = multiSaleCart.has(p.id);
+        const outOfStock = p.quantity <= 0;
+        return `
+        <div class="flex items-center justify-between gap-2 py-2 border-b border-black/5 last:border-0">
+          <div class="min-w-0">
+            <div class="font-medium truncate">${p.name}</div>
+            <div class="text-xs text-ink/45">${formatMoney(p.selling_price)} · ${p.quantity} available</div>
+          </div>
+          <button onclick="addToMultiSaleCart(${p.id})" ${outOfStock ? "disabled" : ""}
+            class="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full ${inCart ? "bg-primary-light text-primary-dark" : outOfStock ? "bg-black/5 text-ink/30" : "bg-primary text-white"}">
+            ${outOfStock ? "Out of stock" : inCart ? "Added" : "+ Add"}
+          </button>
+        </div>`;
+      }).join("")
+    : `<div class="text-sm text-ink/40 py-4 text-center">No products match "${multiSaleSearchTerm}"</div>`;
+
+  const cartHtml = cartCount
+    ? [...multiSaleCart.entries()].map(([id, qty]) => {
+        const p = multiSaleProducts.find(p => p.id === id);
+        if (!p) return "";
+        return `
+        <div class="flex items-center justify-between gap-2 py-2 border-b border-black/5 last:border-0">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium truncate">${p.name}</div>
+            <div class="text-xs text-ink/45">${formatMoney(p.selling_price * qty)}</div>
+          </div>
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <div class="qty-btn" onclick="changeMultiSaleQty(${id}, -1)">−</div>
+            <div class="w-6 text-center font-semibold">${qty}</div>
+            <div class="qty-btn" onclick="changeMultiSaleQty(${id}, 1)">+</div>
+            <button onclick="removeFromMultiSaleCart(${id})" class="text-danger text-sm px-1" title="Remove">✕</button>
+          </div>
+        </div>`;
+      }).join("")
+    : `<div class="text-sm text-ink/40 py-3 text-center">No items selected yet</div>`;
+
+  document.getElementById("multisale-modal-body").innerHTML = `
+    <h2 class="font-display text-xl font-extrabold mb-3">Multi Sale</h2>
+
+    <input id="multisale-search" type="text" placeholder="Search products to add"
+      value="${multiSaleSearchTerm}"
+      oninput="multiSaleSearchTerm = this.value; renderMultiSaleModal()"
+      class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
+
+    ${suggestionChips ? `
+    <div class="mb-2">
+      <div class="text-xs font-semibold text-ink/45 mb-1">Frequently sold</div>
+      <div class="flex gap-2 overflow-x-auto pb-1">${suggestionChips}</div>
+    </div>` : ""}
+
+    <div class="max-h-40 overflow-y-auto border border-black/5 rounded-xl px-3 mb-4">${productListHtml}</div>
+
+    <div class="border-t border-black/10 pt-3 mb-3">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-display font-bold">Cart (${cartCount})</h3>
+        <span class="font-semibold">${formatMoney(cartTotal)}</span>
+      </div>
+      <div class="max-h-52 overflow-y-auto">${cartHtml}</div>
+    </div>
+
+    <div class="flex gap-2">
+      <button onclick="closeModal('multisale-modal')" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
+      <button onclick="confirmMultiSale()" ${cartCount ? "" : "disabled"} class="flex-1 py-2.5 rounded-xl font-semibold ${cartCount ? "bg-primary text-white" : "bg-black/10 text-ink/30"}">Confirm Sale</button>
+    </div>
+  `;
+
+  // Search input loses focus on every re-render since innerHTML is
+  // fully replaced, so put the cursor back and keep typing smooth.
+  const searchInput = document.getElementById("multisale-search");
+  if (document.activeElement !== searchInput) {
+    const active = document.activeElement;
+    if (active && active.id === "multisale-search") searchInput.focus();
+  }
+}
+
+function addToMultiSaleCart(productId) {
+  const p = multiSaleProducts.find(p => p.id === productId);
+  if (!p || p.quantity <= 0) return;
+  const current = multiSaleCart.get(productId) || 0;
+  if (current >= p.quantity) { toast(`Only ${p.quantity} units of ${p.name} available`); return; }
+  multiSaleCart.set(productId, current + 1);
+  renderMultiSaleModal();
+}
+
+function changeMultiSaleQty(productId, delta) {
+  const p = multiSaleProducts.find(p => p.id === productId);
+  const current = multiSaleCart.get(productId) || 0;
+  const next = current + delta;
+  if (next <= 0) { multiSaleCart.delete(productId); }
+  else if (p && next > p.quantity) { toast(`Only ${p.quantity} units of ${p.name} available`); return; }
+  else { multiSaleCart.set(productId, next); }
+  renderMultiSaleModal();
+}
+
+function removeFromMultiSaleCart(productId) {
+  multiSaleCart.delete(productId);
+  renderMultiSaleModal();
+}
+
+async function confirmMultiSale() {
+  if (multiSaleCart.size === 0) return;
+  const items = [...multiSaleCart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
+
+  const btn = document.querySelector('#multisale-modal-body button[onclick="confirmMultiSale()"]');
+  if (btn) { btn.disabled = true; btn.textContent = "Selling…"; }
+
+  try {
+    const result = await Api.sellBatch(items);
+    closeModal("multisale-modal");
+
+    if (result.failed && result.failed.length) {
+      toast(`Sold ${result.succeeded.length} of ${items.length} items, ${formatMoney(result.total_amount)} total. ${result.failed.length} couldn't be sold, see console.`);
+      console.warn("Multi sale issues:", result.failed);
+    } else {
+      toast(`Sold ${result.succeeded.length} items for ${formatMoney(result.total_amount)}`);
+    }
+
+    multiSaleCart = new Map();
+    render();
+  } catch (err) {
+    toast(err.message || "Could not complete the sale");
+    if (btn) { btn.disabled = false; btn.textContent = "Confirm Sale"; }
+  }
+}
 
 // ---------------- ADD STOCK MODAL ----------------
 
@@ -1124,12 +1340,6 @@ async function confirmAddStock(productId) {
 function closeModal(id) {
   document.getElementById(id).classList.add("hidden");
 }
-
-// ---------------- FOOTER INFO ----------------
-// Placeholder copy for About/Support/Privacy/Terms. The privacy and
-// terms text especially should be reviewed by a lawyer before this is
-// relied on as an actual legal policy, this is a reasonable starting
-// draft, not legal advice.
 const FOOTER_INFO = {
   about: {
     title: "About Duka",
@@ -1384,12 +1594,6 @@ async function deleteDocumentFlow(id) {
     toast(err.message);
   }
 }
-
-// ---------------- APPLY DOCUMENT ITEMS TO STOCK ----------------
-// Extracted line items are always shown for review, never applied
-// automatically, a misread quantity should never silently corrupt
-// real stock numbers.
-
 let reviewingDocumentId = null;
 let reviewItems = [];
 let reviewProductsCache = null;
@@ -1513,9 +1717,6 @@ async function sendAIMessage() {
   }
   await typeOutMessage(replyIndex, answer);
 }
-
-// Reveals the AI's reply a few characters at a time so it reads like
-// it is being typed live, instead of the full answer appearing at once.
 function typeOutMessage(index, fullText) {
   return new Promise((resolve) => {
     const bubble = document.querySelector(`[data-msg-index="${index}"]`);
@@ -1533,10 +1734,6 @@ function typeOutMessage(index, fullText) {
     }, 15);
   });
 }
-
-// Records real audio and sends it to Gemini to transcribe, an actual
-// AI feature rather than the browser's own built in speech engine.
-// Falls back gracefully where microphone access isn't available.
 let mediaRecorder = null;
 let recordedChunks = [];
 
@@ -1903,9 +2100,6 @@ function parseFileToRows(file) {
     }
   });
 }
-
-// Column names in the file can vary a bit, this maps common
-// alternatives onto the fields the Worker actually expects.
 const IMPORT_HEADER_ALIASES = {
   product_name: ["product_name", "product", "name"],
   sku: ["sku"],
@@ -1921,10 +2115,6 @@ const IMPORT_HEADER_ALIASES = {
   sold_at: ["sold_at", "date"],
   note: ["note", "supplier"],
 };
-
-// Shows the file(s) just chosen with a way to cancel, in case the
-// wrong file got selected, without having to hunt for the tiny native
-// file picker's own clear control.
 function showFileSelection(inputId) {
   const input = document.getElementById(inputId);
   const info = document.getElementById(`${inputId}-info`);
@@ -2002,17 +2192,7 @@ async function runBulkImport() {
     toast(err.message || "Could not read that file");
   }
 }
-
-// ---------------- SMART IMPORT (any column format) ----------------
-// The AI maps unfamiliar column names onto Duka's fields, but nothing
-// gets imported until the shop owner reviews the result and fills in
-// anything that's still missing, the same "propose, don't just do"
-// pattern used everywhere else AI touches real data in this app.
-
 let smartImportState = null;
-// Each file can have its own column layout, so files are reviewed and
-// imported one at a time, in the order chosen, rather than merging
-// every file's rows into a single mapping.
 let smartImportQueue = [];
 let smartImportTotalFiles = 0;
 
