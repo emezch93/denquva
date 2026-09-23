@@ -959,8 +959,22 @@ function trialBannerHtml() {
     </div>`;
 }
 
+let lastRenderedSales = [];
+
+function saleRowHtml(s) {
+  return `
+        <div onclick="openSaleDetail(${s.id})" class="flex items-center justify-between py-2.5 border-b border-black/5 last:border-0 cursor-pointer active:bg-black/5 rounded-lg px-1 -mx-1">
+          <div>
+            <div class="font-medium">${s.product_name}</div>
+            <div class="text-xs text-ink/45">${s.quantity} units</div>
+          </div>
+          <div class="font-semibold">${formatMoney(s.total_amount)}</div>
+        </div>`;
+}
+
 async function ViewDashboard() {
   const d = await Api.getDashboard();
+  lastRenderedSales = d.recent_sales;
   const stat = (label, value) => `
     <div class="stat-card">
       <div class="text-xs text-ink/50 mb-1">${label}</div>
@@ -976,14 +990,7 @@ async function ViewDashboard() {
     : `<div class="text-sm text-ink/40 py-4 text-center">Nothing running low. Nice.</div>`;
 
   const recentHtml = d.recent_sales.length
-    ? d.recent_sales.map(s => `
-        <div class="flex items-center justify-between py-2.5 border-b border-black/5 last:border-0">
-          <div>
-            <div class="font-medium">${s.product_name}</div>
-            <div class="text-xs text-ink/45">${s.quantity} units</div>
-          </div>
-          <div class="font-semibold">${formatMoney(s.total_amount)}</div>
-        </div>`).join("")
+    ? d.recent_sales.map(saleRowHtml).join("")
     : `<div class="text-sm text-ink/40 py-4 text-center">No sales recorded yet.</div>`;
 
   return `
@@ -1003,7 +1010,10 @@ async function ViewDashboard() {
       ${lowStockHtml}
     </div>
     <div class="card p-4">
-      <h2 class="font-display font-bold mb-1">Recent Sales</h2>
+      <div class="flex items-center justify-between mb-1">
+        <h2 class="font-display font-bold">Recent Sales</h2>
+        ${d.recent_sales.length ? `<button onclick="setView('sales')" class="text-xs font-semibold text-primary">View all →</button>` : ""}
+      </div>
       ${recentHtml}
     </div>
   `;
@@ -1490,6 +1500,7 @@ let salesRange = "today";
 
 async function ViewSales() {
   const sales = await Api.getSales(salesRange);
+  lastRenderedSales = sales;
   const totalRevenue = sales.reduce((a, s) => a + s.total_amount, 0);
   const totalProfit = sales.reduce((a, s) => a + s.estimated_profit, 0);
 
@@ -1500,7 +1511,7 @@ async function ViewSales() {
 
   const rows = sales.length
     ? sales.map(s => `
-        <div class="flex items-center justify-between py-3 border-b border-black/5 last:border-0">
+        <div onclick="openSaleDetail(${s.id})" class="flex items-center justify-between py-3 border-b border-black/5 last:border-0 cursor-pointer active:bg-black/5 rounded-lg px-1 -mx-1">
           <div>
             <div class="font-medium">${s.product_name}</div>
             <div class="text-xs text-ink/45">${new Date(s.sold_at).toLocaleString()} · ${s.quantity} units</div>
@@ -1523,6 +1534,33 @@ async function ViewSales() {
   `;
 }
 
+// ---- Sale detail modal ----
+// The list rows only ever show product, quantity and total, same as a
+// banking app's transaction list. Tapping one opens the full record
+// (unit price, cost, profit, exact timestamp, sale id) instead of
+// cramming all of that into the row itself.
+function openSaleDetail(saleId) {
+  const s = lastRenderedSales.find(s => s.id === saleId);
+  if (!s) return;
+  document.getElementById("sale-detail-modal-body").innerHTML = `
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-display text-xl font-extrabold">Sale #${s.id}</h2>
+      <button onclick="closeModal('sale-detail-modal')" class="text-ink/40 text-xl leading-none">✕</button>
+    </div>
+    <div class="space-y-3 text-sm">
+      <div class="flex justify-between"><span class="text-ink/50">Product</span><span class="font-semibold text-right">${s.product_name}</span></div>
+      <div class="flex justify-between"><span class="text-ink/50">Quantity</span><span class="font-semibold">${s.quantity}</span></div>
+      <div class="flex justify-between"><span class="text-ink/50">Unit price</span><span class="font-semibold">${formatMoney(s.unit_price)}</span></div>
+      <div class="flex justify-between"><span class="text-ink/50">Unit cost</span><span class="font-semibold">${formatMoney(s.unit_cost)}</span></div>
+      <div class="flex justify-between border-t border-black/10 pt-3"><span class="text-ink/50">Total amount</span><span class="font-bold">${formatMoney(s.total_amount)}</span></div>
+      <div class="flex justify-between"><span class="text-ink/50">Estimated profit</span><span class="font-semibold text-primary">${formatMoney(s.estimated_profit)}</span></div>
+      <div class="flex justify-between border-t border-black/10 pt-3"><span class="text-ink/50">Date & time</span><span class="font-semibold text-right">${new Date(s.sold_at).toLocaleString()}</span></div>
+    </div>
+    <button onclick="closeModal('sale-detail-modal')" class="w-full mt-5 py-2.5 rounded-xl border border-black/10 font-semibold">Close</button>
+  `;
+  document.getElementById("sale-detail-modal").classList.remove("hidden");
+}
+
 // ---------------- CREDIT SALES VIEW ----------------
 
 let creditSearchTerm = "";
@@ -1530,9 +1568,11 @@ let creditStatusFilter = ""; // "", "pending", "paid"
 let creditSortKey = "date";
 let creditSortDir = "desc";
 let creditSelected = new Set();
+let lastRenderedCreditSales = [];
 
 async function ViewCredit() {
   const sales = await Api.getCreditSales({ search: creditSearchTerm, status: creditStatusFilter, sort: creditSortKey, dir: creditSortDir });
+  lastRenderedCreditSales = sales;
   const totalOutstanding = sales.filter(s => s.status === "pending").reduce((a, s) => a + s.outstanding_amount, 0);
   // Drop selections for anything no longer visible or no longer pending
   // (e.g. paid by someone else since the last render).
@@ -1548,9 +1588,9 @@ async function ViewCredit() {
   const rows = sales.length ? sales.map(s => {
     const itemsSummary = (s.items || []).map(i => `${i.product_name} x${i.quantity}`).join(", ");
     return `
-    <div class="flex items-start gap-3 py-3 border-b border-black/5 last:border-0">
+    <div onclick="openCreditDetail(${s.id})" class="flex items-start gap-3 py-3 border-b border-black/5 last:border-0 cursor-pointer active:bg-black/5 rounded-lg px-1 -mx-1">
       ${s.status === "pending"
-        ? `<input type="checkbox" class="mt-1.5" ${creditSelected.has(s.id) ? "checked" : ""} onchange="toggleCreditSelect(${s.id}, this.checked)" />`
+        ? `<input type="checkbox" class="mt-1.5" ${creditSelected.has(s.id) ? "checked" : ""} onclick="event.stopPropagation()" onchange="toggleCreditSelect(${s.id}, this.checked)" />`
         : `<div class="w-4"></div>`}
       <div class="flex-1 min-w-0">
         <div class="flex items-center justify-between gap-2">
@@ -1617,6 +1657,44 @@ async function markSelectedCreditPaid() {
   } catch (err) {
     toast(err.message || "Could not update those credit sales");
   }
+}
+
+// ---- Credit sale detail modal ----
+function openCreditDetail(creditSaleId) {
+  const s = lastRenderedCreditSales.find(s => s.id === creditSaleId);
+  if (!s) return;
+
+  const itemsHtml = (s.items || []).map(i => `
+    <div class="flex justify-between py-1.5 border-b border-black/5 last:border-0 text-sm">
+      <span>${i.product_name} <span class="text-ink/40">x${i.quantity}</span></span>
+      <span class="font-medium">${formatMoney(i.line_total)}</span>
+    </div>`).join("");
+  const subtotal = s.total_price + s.discount;
+
+  document.getElementById("credit-detail-modal-body").innerHTML = `
+    <div class="flex items-center justify-between mb-1">
+      <h2 class="font-display text-xl font-extrabold">${s.customer_name}</h2>
+      <button onclick="closeModal('credit-detail-modal')" class="text-ink/40 text-xl leading-none">✕</button>
+    </div>
+    <span class="inline-block text-xs font-semibold px-2 py-0.5 rounded-full mb-4 ${s.status === "paid" ? "bg-primary-light text-primary-dark" : "bg-amber-light text-amber-dark"}">${s.status === "paid" ? "Paid" : "Pending"}</span>
+
+    <div class="mb-4">
+      <div class="text-xs font-semibold text-ink/45 mb-1">Items</div>
+      ${itemsHtml || `<div class="text-sm text-ink/40">No items on record</div>`}
+    </div>
+
+    <div class="space-y-2 text-sm border-t border-black/10 pt-3">
+      <div class="flex justify-between"><span class="text-ink/50">Subtotal</span><span class="font-semibold">${formatMoney(subtotal)}</span></div>
+      ${s.discount > 0 ? `<div class="flex justify-between"><span class="text-ink/50">Discount</span><span class="font-semibold text-danger">−${formatMoney(s.discount)}</span></div>` : ""}
+      <div class="flex justify-between"><span class="text-ink/50">Total price</span><span class="font-bold">${formatMoney(s.total_price)}</span></div>
+      <div class="flex justify-between"><span class="text-ink/50">Outstanding</span><span class="font-semibold ${s.status === "pending" ? "text-danger" : "text-primary"}">${s.status === "pending" ? formatMoney(s.outstanding_amount) : "Settled"}</span></div>
+      <div class="flex justify-between border-t border-black/10 pt-3"><span class="text-ink/50">Purchase date</span><span class="font-semibold text-right">${new Date(s.purchase_date).toLocaleString()}</span></div>
+      ${s.paid_at ? `<div class="flex justify-between"><span class="text-ink/50">Paid on</span><span class="font-semibold text-right">${new Date(s.paid_at).toLocaleString()}</span></div>` : ""}
+    </div>
+
+    <button onclick="closeModal('credit-detail-modal')" class="w-full mt-5 py-2.5 rounded-xl border border-black/10 font-semibold">Close</button>
+  `;
+  document.getElementById("credit-detail-modal").classList.remove("hidden");
 }
 
 // ---- New Credit Sale modal ----
