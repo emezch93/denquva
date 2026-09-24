@@ -1,6 +1,6 @@
 {
-  "name": "Duka Shop Manager",
-  "short_name": "Duka",
+  "name": "Denquva",
+  "short_name": "Denquva",
   "description": "Track products, sales, and stock, and ask AI about your business.",
   "start_url": "./index.html",
   "scope": "./",
