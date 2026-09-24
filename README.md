@@ -1,8 +1,8 @@
-# Duka Shop Manager
+# Denquva
 
 A shop management Progressive Web App for small businesses: inventory, sales, credit sales, and an AI assistant that reads and explains your business data.
 
-**Live app:** https://dukashopmanager.pages.dev
+**Live app:** https://denquva.pages.dev
 
 ## What it does
 
@@ -28,7 +28,7 @@ A shop management Progressive Web App for small businesses: inventory, sales, cr
 
 **Data import**
 - Bulk CSV/Excel import for products, sales, and stock; re-uploading a file updates existing products (matched by SKU or name) instead of failing on duplicates
-- Smart import: any column layout, AI maps it to Duka's fields, with a review step before anything is saved; supports multiple files in one go, processed one at a time
+- Smart import: any column layout, AI maps it to Denquva's fields, with a review step before anything is saved; supports multiple files in one go, processed one at a time
 
 **Accounts & billing**
 - Signup/login, password reset via security question
@@ -54,7 +54,7 @@ No frameworks, no Node backend, no external database service.
 ## Project structure
 
 ```
-duka-shop-manager/
+denquva/ (repo folder name unchanged unless you rename it on GitHub)
 ├── index.html              App shell, meta tags, canonical/SEO tags
 ├── service-worker.js       Offline caching
 ├── manifest.json           PWA manifest
