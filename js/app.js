@@ -1,4 +1,4 @@
-const API_BASE = "https://duka-api.emezch93.workers.dev";
+const API_BASE = "https://denquva-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = false;
 const CURRENCIES = {
   NGN: { symbol: "₦", locale: "en-NG", name: "Nigerian Naira" },
@@ -27,14 +27,14 @@ const CURRENCIES = {
 let shopSettings = null;
 
 // ---------------- AUTH STATE ----------------
-// Duka is multi tenant: every shop owner logs in, and every API call
+// Denquva is multi tenant: every shop owner logs in, and every API call
 // below carries their token so the Worker knows whose data to touch.
-let authToken = localStorage.getItem("duka_token") || null;
+let authToken = localStorage.getItem("denquva_token") || null;
 let currentShop = null; // { shop_name, email, subscription_status }
 
 // Which shop this session is currently operating on. Defaults to the
 // login's own shop, but a login that runs several shops can switch.
-let activeShopId = localStorage.getItem("duka_active_shop_id") || null;
+let activeShopId = localStorage.getItem("denquva_active_shop_id") || null;
 
 async function authFetch(url, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -48,8 +48,8 @@ function logout() {
   currentShop = null;
   shopSettings = null;
   activeShopId = null;
-  localStorage.removeItem("duka_token");
-  localStorage.removeItem("duka_active_shop_id");
+  localStorage.removeItem("denquva_token");
+  localStorage.removeItem("denquva_active_shop_id");
   render();
 }
 
@@ -668,7 +668,7 @@ async function render() {
         currentShop = await Api.me();
         if (!activeShopId) {
           activeShopId = String(currentShop.id);
-          localStorage.setItem("duka_active_shop_id", activeShopId);
+          localStorage.setItem("denquva_active_shop_id", activeShopId);
         }
       } catch (err) {
         if (err.status === 401) {
@@ -678,7 +678,7 @@ async function render() {
           document.getElementById("app").innerHTML = `
             <div class="max-w-sm mx-auto mt-16 text-center">
               <div class="text-4xl mb-3">📡</div>
-              <h1 class="font-display text-xl font-extrabold mb-2">Can't reach Duka</h1>
+              <h1 class="font-display text-xl font-extrabold mb-2">Can't reach Denquva</h1>
               <p class="text-sm text-ink/50 mb-5">Check your connection and try again. You're still logged in.</p>
               <button onclick="render()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Retry</button>
             </div>`;
@@ -731,7 +731,7 @@ async function ViewAuth() {
   return `
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
       <div class="text-center mb-6">
-        <div class="font-display text-3xl font-extrabold text-primary-dark">Duka</div>
+        <div class="font-display text-3xl font-extrabold text-primary-dark">Denquva</div>
         <p class="text-sm text-ink/50 mt-1">Simple stock and sales, in your pocket.</p>
       </div>
       <div class="flex bg-black/5 rounded-full p-1 mb-5">
@@ -766,7 +766,7 @@ function ViewForgotPassword() {
   return `
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
       <div class="text-center mb-6">
-        <div class="font-display text-3xl font-extrabold text-primary-dark">Duka</div>
+        <div class="font-display text-3xl font-extrabold text-primary-dark">Denquva</div>
         <p class="text-sm text-ink/50 mt-1">Reset your password</p>
       </div>
       <div class="card p-4 space-y-3">
@@ -854,7 +854,7 @@ async function submitAuth() {
       if (!security_question || !security_answer) { toast("A security question and answer are required, they're how you recover your password"); return; }
       const result = await Api.signup({ shop_name, email, password, security_question, security_answer });
       authToken = result.token;
-      localStorage.setItem("duka_token", authToken);
+      localStorage.setItem("denquva_token", authToken);
       if (result.authorization_url) {
         window.location.href = result.authorization_url;
         return;
@@ -865,7 +865,7 @@ async function submitAuth() {
     } else {
       const result = await Api.login({ email, password });
       authToken = result.token;
-      localStorage.setItem("duka_token", authToken);
+      localStorage.setItem("denquva_token", authToken);
       currentShop = null;
       render();
     }
@@ -881,12 +881,12 @@ async function ViewPaymentPending() {
   const status = currentShop?.subscription_status;
   const isTrialExpired = status === "trial";
   const message = isTrialExpired
-    ? "Your 7 day free trial has ended. Subscribe to keep using Duka."
+    ? "Your 7 day free trial has ended. Subscribe to keep using Denquva."
     : status === "past_due"
-    ? "Your last payment didn't go through. Renew to keep using Duka."
+    ? "Your last payment didn't go through. Renew to keep using Denquva."
     : status === "canceled"
-    ? "Your subscription was canceled. Resubscribe to keep using Duka."
-    : "Complete your payment to start using Duka.";
+    ? "Your subscription was canceled. Resubscribe to keep using Denquva."
+    : "Complete your payment to start using Denquva.";
   return `
     <div class="max-w-sm mx-auto mt-16 text-center">
       <div class="text-4xl mb-3">${isTrialExpired ? "🎉" : "⏳"}</div>
@@ -940,7 +940,7 @@ function subscriptionCardHtml() {
   }
   const message = status === "trial"
     ? "You're on the free trial. Subscribe anytime to keep going past it."
-    : "Subscribe to keep using Duka.";
+    : "Subscribe to keep using Denquva.";
   return `
     <div class="card p-4 mt-4">
       <h2 class="font-display font-bold mb-1">Subscription</h2>
@@ -1448,8 +1448,8 @@ function closeModal(id) {
 // draft, not legal advice.
 const FOOTER_INFO = {
   about: {
-    title: "About Duka",
-    body: `Duka is a complete shop management platform for tracking inventory, sales, and profit in real time.
+    title: "About Denquva",
+    body: `Denquva is a complete shop management platform for tracking inventory, sales, and profit in real time.
       Add products with photos and pricing, record sales with one tap, and every transaction is logged with a
       full audit trail. A built-in AI assistant answers business questions and reads uploaded receipts and
       invoices to help explain your data. One account supports multiple shops or branches, each fully
@@ -1458,27 +1458,27 @@ const FOOTER_INFO = {
   support: {
     title: "Support",
     body: `Need help with your account, billing, or something in the app isn't working as expected? Email
-      <a href="mailto:dukashopmanager@gmail.com" class="text-primary-dark underline">dukashopmanager@gmail.com</a>
+      <a href="mailto:denquva@gmail.com" class="text-primary-dark underline">denquva@gmail.com</a>
       and describe what happened, including your shop name if you can. We aim to respond as quickly as possible.`,
   },
   privacy: {
     title: "Privacy Policy",
-    body: `Duka stores the business data you enter, products, sales, stock movements, and settings, to provide
-      the service. Payment is processed by Paystack, Duka does not store your card details. Questions you ask
+    body: `Denquva stores the business data you enter, products, sales, stock movements, and settings, to provide
+      the service. Payment is processed by Paystack, Denquva does not store your card details. Questions you ask
       the AI assistant, and any documents you upload, are sent to Google's Gemini API to generate a response;
       document uploads are summarized and the summary is kept, the original file is not stored. Your data is
       never sold. Data for each shop is kept separate and is never visible to other shops on the platform.
-      Contact <a href="mailto:dukashopmanager@gmail.com" class="text-primary-dark underline">dukashopmanager@gmail.com</a>
+      Contact <a href="mailto:denquva@gmail.com" class="text-primary-dark underline">denquva@gmail.com</a>
       with any privacy questions.`,
   },
   terms: {
     title: "Terms of Service",
-    body: `By using Duka you agree to use it for lawful business purposes and to keep your login credentials
+    body: `By using Denquva you agree to use it for lawful business purposes and to keep your login credentials
       secure. New accounts include a 7 day free trial; continued use after the trial requires an active paid
       subscription, billed in advance for the period selected. Subscriptions do not renew automatically onto a
-      different price without notice. Duka is provided as-is; we work to keep it reliable but cannot guarantee
+      different price without notice. Denquva is provided as-is; we work to keep it reliable but cannot guarantee
       uninterrupted service. You are responsible for the accuracy of the business data you enter. Contact
-      <a href="mailto:dukashopmanager@gmail.com" class="text-primary-dark underline">dukashopmanager@gmail.com</a>
+      <a href="mailto:denquva@gmail.com" class="text-primary-dark underline">denquva@gmail.com</a>
       with any questions about these terms.`,
   },
 };
@@ -2407,7 +2407,7 @@ async function submitChangePassword() {
 
 function switchShop(id) {
   activeShopId = String(id);
-  localStorage.setItem("duka_active_shop_id", activeShopId);
+  localStorage.setItem("denquva_active_shop_id", activeShopId);
   shopSettings = null;
   toast("Switched shop");
   render();
@@ -2442,7 +2442,7 @@ async function deleteShopFlow(id, name) {
     await Api.deleteShop(id);
     if (activeShopId === String(id)) {
       activeShopId = String(currentShop.id);
-      localStorage.setItem("duka_active_shop_id", activeShopId);
+      localStorage.setItem("denquva_active_shop_id", activeShopId);
       shopSettings = null;
     }
     toast(`"${name}" deleted`);
@@ -2485,7 +2485,7 @@ async function downloadReport() {
     const now = new Date();
     const rows = [];
 
-    rows.push(["Duka business report"]);
+    rows.push(["Denquva business report"]);
     rows.push(["Shop", shopName]);
     rows.push(["Generated", now.toLocaleDateString(), now.toLocaleTimeString()]);
     rows.push(["Total products", dashboard.total_products]);
@@ -2650,7 +2650,7 @@ async function runBulkImport() {
 }
 
 // ---------------- SMART IMPORT (any column format) ----------------
-// The AI maps unfamiliar column names onto Duka's fields, but nothing
+// The AI maps unfamiliar column names onto Denquva's fields, but nothing
 // gets imported until the shop owner reviews the result and fills in
 // anything that's still missing, the same "propose, don't just do"
 // pattern used everywhere else AI touches real data in this app.
