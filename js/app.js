@@ -1049,7 +1049,16 @@ async function ViewProducts() {
 function productCard(p) {
   const isLow = p.quantity <= p.low_stock_threshold;
   return `
-    <div class="card p-4 flex flex-col gap-2">
+    <div class="relative overflow-hidden rounded-2xl">
+      <div class="absolute inset-0 bg-danger flex items-center justify-between px-6 text-white font-semibold rounded-2xl" aria-hidden="true">
+        <span>Delete</span><span>Delete</span>
+      </div>
+      <div class="card p-4 flex flex-col gap-2 relative bg-surface"
+        style="touch-action: pan-y;"
+        ontouchstart="swipeStart(event, ${p.id})"
+        ontouchmove="swipeMove(event, ${p.id})"
+        ontouchend="swipeEnd(event, ${p.id})"
+        ontouchcancel="swipeCancel()">
       <div class="flex items-start justify-between gap-3">
         <div class="flex items-center gap-3">
           ${p.image_url
@@ -1073,7 +1082,59 @@ function productCard(p) {
         <button onclick="openProductForm(${p.id})" class="underline">Edit</button>
         <button onclick="confirmDeleteProduct(${p.id})" class="underline">Delete</button>
       </div>
+      </div>
     </div>`;
+}
+
+// ---- Swipe to delete (Products only, the only page with a real
+// delete action to attach it to) ----
+// Deliberately built on touchstart/touchmove/touchend, not generic
+// pointer events, so desktop mouse behavior is completely untouched,
+// this only ever activates on an actual touchscreen.
+let swipeState = null;
+
+function swipeStart(event, id) {
+  const touch = event.touches[0];
+  swipeState = { id, startX: touch.clientX, startY: touch.clientY, currentX: 0, axisLocked: null };
+}
+
+function swipeMove(event, id) {
+  if (!swipeState || swipeState.id !== id) return;
+  const touch = event.touches[0];
+  const deltaX = touch.clientX - swipeState.startX;
+  const deltaY = touch.clientY - swipeState.startY;
+
+  // Decide once, early, whether this is a horizontal swipe (ours to
+  // handle) or a vertical scroll (never touched, left entirely to the
+  // browser). A tap with no real movement never reaches this branch at
+  // all, so buttons and links underneath keep working normally.
+  if (swipeState.axisLocked === null && (Math.abs(deltaX) > 8 || Math.abs(deltaY) > 8)) {
+    swipeState.axisLocked = Math.abs(deltaX) > Math.abs(deltaY) ? "x" : "y";
+  }
+  if (swipeState.axisLocked !== "x") return;
+
+  event.preventDefault();
+  swipeState.currentX = Math.max(-120, Math.min(120, deltaX));
+  event.currentTarget.style.transform = `translateX(${swipeState.currentX}px)`;
+}
+
+function swipeEnd(event, id) {
+  if (!swipeState || swipeState.id !== id) return;
+  const el = event.currentTarget;
+  const shouldDelete = Math.abs(swipeState.currentX) > 90;
+  el.style.transition = "transform 0.2s ease";
+  el.style.transform = "";
+  setTimeout(() => { el.style.transition = ""; }, 200);
+  const swipedId = swipeState.id;
+  swipeState = null;
+  // Calls the exact same function the existing "Delete" link calls,
+  // same confirm() dialog, same request, this is only a second way to
+  // trigger it, not a separate delete path.
+  if (shouldDelete) confirmDeleteProduct(swipedId);
+}
+
+function swipeCancel() {
+  swipeState = null;
 }
 
 function openProductForm(id) {
