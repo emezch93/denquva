@@ -425,6 +425,11 @@ const Api = {
     return apiJson(res);
   },
 
+  async cancelSubscription() {
+    const res = await authFetch(`${API_BASE}/paystack/cancel`, { method: "POST" });
+    return apiJson(res);
+  },
+
   async changePassword(current_password, new_password) {
     const res = await authFetch(`${API_BASE}/auth/change-password`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -935,7 +940,8 @@ function subscriptionCardHtml() {
     <div class="card p-4 mt-4">
       <h2 class="font-display font-bold mb-1">Subscription</h2>
       <p class="text-sm text-ink/50 mb-3">Billed quarterly.</p>
-      <button disabled class="w-full bg-primary-light text-primary-dark font-semibold py-2.5 rounded-xl cursor-default">Subscribed</button>
+      <button disabled class="w-full bg-primary-light text-primary-dark font-semibold py-2.5 rounded-xl cursor-default mb-2">Subscribed</button>
+      <button onclick="cancelSubscriptionFlow()" class="w-full text-xs text-ink/40 underline">Cancel subscription</button>
     </div>`;
   }
   const message = status === "trial"
@@ -947,6 +953,20 @@ function subscriptionCardHtml() {
       <p class="text-sm text-ink/50 mb-3">${message}</p>
       <button onclick="resumePaymentFlow()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Subscribe now</button>
     </div>`;
+}
+
+async function cancelSubscriptionFlow() {
+  const confirmed = confirm("Cancel your Denquva subscription? This takes effect immediately and stops billing, your data stays saved if you resubscribe later.");
+  if (!confirmed) return;
+  try {
+    await Api.cancelSubscription();
+    const updated = await Api.me();
+    currentShop = updated;
+    toast("Subscription canceled.");
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 function trialBannerHtml() {
