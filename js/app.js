@@ -736,8 +736,11 @@ async function ViewAuth() {
   return `
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
       <div class="text-center mb-6">
-        <div class="font-display text-3xl font-extrabold text-primary-dark">Denquva</div>
+        <h1 class="font-display text-3xl font-extrabold text-primary-dark">Denquva</h1>
         <p class="text-sm text-ink/50 mt-1">Simple stock and sales, in your pocket.</p>
+        <p class="text-sm text-ink/70 mt-3 max-w-xs mx-auto">
+          Track products, sales, and profit in real time, with an AI assistant that reads your receipts and answers questions about your business.
+        </p>
       </div>
       <div class="flex bg-black/5 rounded-full p-1 mb-5">
         <button onclick="authMode='login'; render()" class="flex-1 py-2 rounded-full text-sm font-semibold ${authMode === "login" ? "bg-white shadow-sm" : "text-ink/50"}">Log in</button>
@@ -771,7 +774,7 @@ function ViewForgotPassword() {
   return `
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
       <div class="text-center mb-6">
-        <div class="font-display text-3xl font-extrabold text-primary-dark">Denquva</div>
+        <h1 class="font-display text-3xl font-extrabold text-primary-dark">Denquva</h1>
         <p class="text-sm text-ink/50 mt-1">Reset your password</p>
       </div>
       <div class="card p-4 space-y-3">
