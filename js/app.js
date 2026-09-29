@@ -1076,7 +1076,7 @@ function productCard(p) {
       <div class="absolute inset-0 bg-danger flex items-center justify-between px-6 text-white font-semibold rounded-2xl" aria-hidden="true">
         <span>Delete</span><span>Delete</span>
       </div>
-      <div class="card p-4 flex flex-col gap-2 relative bg-surface"
+      <div class="card p-4 flex flex-col gap-2 relative bg-surface h-full"
         style="touch-action: pan-y;"
         ontouchstart="swipeStart(event, ${p.id})"
         ontouchmove="swipeMove(event, ${p.id})"
