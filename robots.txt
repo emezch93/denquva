@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://denquva.pages.dev/sitemap.xml
+Sitemap: https://emezch93.github.io/denquva/sitemap.xml
