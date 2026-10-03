@@ -40,6 +40,21 @@ async function authFetch(url, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
   if (activeShopId) headers["X-Shop-Id"] = activeShopId;
+  // Reads time out so a dead connection fails fast into the saved screen or
+  // Retry state. Writes (sales, imports, AI) are never cut short.
+  const isRead = !options.method || String(options.method).toUpperCase() === "GET";
+  if (isRead && !options.signal && typeof AbortController !== "undefined") {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20000);
+    try {
+      return await fetch(url, { ...options, headers, signal: ctrl.signal });
+    } catch (err) {
+      if (err.name === "AbortError") throw new Error("Connection is slow. Check your network and try again.");
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   return fetch(url, { ...options, headers });
 }
 
@@ -738,7 +753,7 @@ async function maybeRefreshTrialStatus() {
 }
 
 let renderSeq = 0;
-let lastPaintedView = null;
+let lastPaintedView = null; // "<shopId>:<view>"
 let backgroundRefreshStarted = false;
 
 // Refresh shop, plan and settings quietly after the screen is already up.
@@ -789,9 +804,11 @@ async function render() {
     }
 
     // Paint from the last known session immediately, verify in the background.
+    let shopFromCache = false;
     if (!currentShop) {
       const cachedShop = readCache(CACHE_KEYS.shop);
       if (cachedShop && cachedShop.id !== undefined) {
+        shopFromCache = true;
         currentShop = cachedShop;
         if (!activeShopId) activeShopId = String(cachedShop.id);
         shopSettings = shopSettings || readCache(CACHE_KEYS.settings);
@@ -825,6 +842,18 @@ async function render() {
         }
       }
     }
+    // Never lock someone out on saved data alone: confirm with the server first.
+    if (!isSessionUsable(currentShop) && shopFromCache) {
+      try {
+        const fresh = await Api.me();
+        if (stale()) return;
+        currentShop = fresh;
+        writeCache(CACHE_KEYS.shop, fresh);
+      } catch (err) {
+        if (stale()) return;
+        if (err.status === 401) { logout(); return; }
+      }
+    }
     if (!isSessionUsable(currentShop)) {
       hideNav();
       const html = await ViewPaymentPending();
@@ -841,7 +870,8 @@ async function render() {
   showNav();
   renderNav();
   const view = currentView;
-  const sameView = lastPaintedView === view && app.children.length > 0 && !app.querySelector(".skel-wrap");
+  const paintKey = `${activeShopId}:${view}`;
+  const sameView = lastPaintedView === paintKey && app.children.length > 0 && !app.querySelector(".skel-wrap");
   let showingSnapshot = false;
 
   if (!sameView) {
@@ -876,7 +906,7 @@ async function render() {
     if (stale()) return;
     app.classList.remove("is-stale");
     app.innerHTML = html;
-    lastPaintedView = view;
+    lastPaintedView = paintKey;
     if (!USE_SAMPLE_DATA) writeSnapshot(view, html);
     if (view === "ai" && pendingAIQuestion) {
       const input = document.getElementById("ai-input");
@@ -887,8 +917,9 @@ async function render() {
     if (stale()) return;
     if (showingSnapshot) {
       // Offline or slow: keep the last saved screen readable instead of erasing it.
+      app.classList.remove("is-stale");
       toast("Showing last saved data. Will refresh when you're back online.");
-      lastPaintedView = view;
+      lastPaintedView = null; // retry fully on the next render or when back online
       return;
     }
     app.classList.remove("is-stale");
@@ -3131,7 +3162,7 @@ window.addEventListener("offline", () => document.getElementById("offline-pill")
 window.addEventListener("online", () => {
   document.getElementById("offline-pill").classList.add("hidden");
   // Refresh any screen that is only showing saved data.
-  if (document.getElementById("app")?.classList.contains("is-stale")) render();
+  if (lastPaintedView === null && authToken) render();
 });
 if (!navigator.onLine) document.getElementById("offline-pill").classList.remove("hidden");
 
