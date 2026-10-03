@@ -85,3 +85,9 @@
 /* Saved screen shown while fresh data loads: readable, not tappable */
 #app.is-stale { pointer-events: none; opacity: 0.92; }
 body { overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
+
+/* Utilities the app uses that were missing from the compiled Tailwind file */
+.gap-1\.5 { gap: 0.375rem; }
+.h-full { height: 100%; }
+.max-w-xs { max-width: 20rem; }
+.hover\:text-ink\/60:hover { color: rgba(22,36,29,0.6); }
