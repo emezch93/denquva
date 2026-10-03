@@ -50,7 +50,75 @@ function logout() {
   activeShopId = null;
   localStorage.removeItem("denquva_token");
   localStorage.removeItem("denquva_active_shop_id");
+  clearLocalCaches();
   render();
+}
+
+// ---------------- SPEED LAYER ----------------
+// The app paints from the last known state first, then refreshes from the
+// network in the background, so a slow connection never blocks the screen.
+const CACHE_KEYS = { shop: "denquva_cache_shop", settings: "denquva_cache_settings", snapPrefix: "denquva_snap_" };
+const NO_SNAPSHOT_VIEWS = ["ai", "settings"];
+
+function readCache(key) {
+  try { return JSON.parse(localStorage.getItem(key) || "null"); } catch { return null; }
+}
+function writeCache(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+}
+function snapKey(view) { return `${CACHE_KEYS.snapPrefix}${activeShopId || "x"}_${view}`; }
+function readSnapshot(view) {
+  if (NO_SNAPSHOT_VIEWS.includes(view)) return null;
+  try { return localStorage.getItem(snapKey(view)); } catch { return null; }
+}
+function writeSnapshot(view, html) {
+  if (NO_SNAPSHOT_VIEWS.includes(view) || html.length > 250000) return;
+  try { localStorage.setItem(snapKey(view), html); } catch {}
+}
+function clearLocalCaches() {
+  try {
+    Object.keys(localStorage)
+      .filter(k => k === CACHE_KEYS.shop || k === CACHE_KEYS.settings || k.startsWith(CACHE_KEYS.snapPrefix))
+      .forEach(k => localStorage.removeItem(k));
+  } catch {}
+}
+
+const SKELETON_HTML = `
+  <div class="skel-wrap" aria-busy="true" aria-label="Loading">
+    <div class="skel skel-title"></div>
+    <div class="skel-grid"><div class="skel skel-card"></div><div class="skel skel-card"></div></div>
+    <div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div>
+  </div>`;
+
+function revealFooter() {
+  document.getElementById("site-footer")?.classList.remove("hidden");
+}
+
+// Heavy import libraries load only when needed (and quietly warm up when idle).
+const LIB_URLS = {
+  papa: "https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js",
+  xlsx: "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
+};
+const libPromises = {};
+function loadLib(name) {
+  if (libPromises[name]) return libPromises[name];
+  libPromises[name] = new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    el.src = LIB_URLS[name];
+    el.onload = resolve;
+    el.onerror = () => {
+      delete libPromises[name];
+      reject(new Error("Could not load the import tools. Check your connection and try again."));
+    };
+    document.head.appendChild(el);
+  });
+  return libPromises[name];
+}
+function warmLibsWhenIdle() {
+  if (navigator.connection?.saveData) return;
+  const go = () => { loadLib("papa").catch(() => {}); loadLib("xlsx").catch(() => {}); };
+  if ("requestIdleCallback" in window) requestIdleCallback(go, { timeout: 8000 });
+  else setTimeout(go, 4000);
 }
 
 function formatMoney(n) {
@@ -669,70 +737,162 @@ async function maybeRefreshTrialStatus() {
   }
 }
 
+let renderSeq = 0;
+let lastPaintedView = null;
+let backgroundRefreshStarted = false;
+
+// Refresh shop, plan and settings quietly after the screen is already up.
+async function refreshSessionInBackground() {
+  if (backgroundRefreshStarted) return;
+  backgroundRefreshStarted = true;
+  let needsRender = false;
+  try {
+    const fresh = await Api.me();
+    const wasUsable = currentShop ? isSessionUsable(currentShop) : true;
+    currentShop = fresh;
+    writeCache(CACHE_KEYS.shop, fresh);
+    if (!activeShopId) {
+      activeShopId = String(fresh.id);
+      localStorage.setItem("denquva_active_shop_id", activeShopId);
+    }
+    if (wasUsable !== isSessionUsable(fresh)) needsRender = true;
+  } catch (err) {
+    if (err.status === 401) { logout(); return; }
+  }
+  try {
+    const freshSettings = await Api.getSettings();
+    if (JSON.stringify(freshSettings) !== JSON.stringify(shopSettings)) {
+      shopSettings = freshSettings;
+      needsRender = true;
+    }
+    writeCache(CACHE_KEYS.settings, freshSettings);
+  } catch {}
+  if (needsRender) render();
+}
+
 async function render() {
+  const seq = ++renderSeq;
+  const app = document.getElementById("app");
+  const stale = () => seq !== renderSeq;
+
   // Sample mode has no Worker to log into, so it skips straight to the app.
   if (!USE_SAMPLE_DATA) {
     if (!authToken) {
       hideNav();
-      document.getElementById("app").innerHTML = await ViewAuth();
+      const html = await ViewAuth();
+      if (stale()) return;
+      app.classList.remove("is-stale");
+      app.innerHTML = html;
+      lastPaintedView = null;
+      revealFooter();
       return;
     }
+
+    // Paint from the last known session immediately, verify in the background.
     if (!currentShop) {
-      try {
-        currentShop = await Api.me();
-        if (!activeShopId) {
-          activeShopId = String(currentShop.id);
-          localStorage.setItem("denquva_active_shop_id", activeShopId);
+      const cachedShop = readCache(CACHE_KEYS.shop);
+      if (cachedShop && cachedShop.id !== undefined) {
+        currentShop = cachedShop;
+        if (!activeShopId) activeShopId = String(cachedShop.id);
+        shopSettings = shopSettings || readCache(CACHE_KEYS.settings);
+      } else {
+        app.innerHTML = SKELETON_HTML;
+        revealFooter();
+        try {
+          const me = await Api.me();
+          if (stale()) return;
+          currentShop = me;
+          writeCache(CACHE_KEYS.shop, me);
+          if (!activeShopId) {
+            activeShopId = String(me.id);
+            localStorage.setItem("denquva_active_shop_id", activeShopId);
+          }
+        } catch (err) {
+          if (stale()) return;
+          if (err.status === 401) {
+            logout();
+          } else {
+            hideNav();
+            app.innerHTML = `
+              <div class="max-w-sm mx-auto mt-16 text-center">
+                <div class="flex justify-center mb-3"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-ink/40"><path d="M2 2 22 22"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M5 12.9a10 10 0 0 1 5.17-2.69"/><path d="M19 12.9a10 10 0 0 0-2.26-1.94"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></div>
+                <h1 class="font-display text-xl font-extrabold mb-2">Can't reach Denquva</h1>
+                <p class="text-sm text-ink/50 mb-5">Check your connection and try again. You're still logged in.</p>
+                <button onclick="render()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Retry</button>
+              </div>`;
+          }
+          return;
         }
-      } catch (err) {
-        if (err.status === 401) {
-          logout();
-        } else {
-          hideNav();
-          document.getElementById("app").innerHTML = `
-            <div class="max-w-sm mx-auto mt-16 text-center">
-              <div class="flex justify-center mb-3"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-ink/40"><path d="M2 2 22 22"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M5 12.9a10 10 0 0 1 5.17-2.69"/><path d="M19 12.9a10 10 0 0 0-2.26-1.94"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></div>
-              <h1 class="font-display text-xl font-extrabold mb-2">Can't reach Denquva</h1>
-              <p class="text-sm text-ink/50 mb-5">Check your connection and try again. You're still logged in.</p>
-              <button onclick="render()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Retry</button>
-            </div>`;
-        }
-        return;
       }
     }
     if (!isSessionUsable(currentShop)) {
       hideNav();
-      document.getElementById("app").innerHTML = await ViewPaymentPending();
+      const html = await ViewPaymentPending();
+      if (stale()) return;
+      app.classList.remove("is-stale");
+      app.innerHTML = html;
+      lastPaintedView = null;
+      revealFooter();
       return;
     }
     maybeRefreshTrialStatus();
   }
 
-  if (!shopSettings) {
-    try { shopSettings = USE_SAMPLE_DATA ? sampleSettings : await Api.getSettings(); }
-    catch { shopSettings = {}; }
-  }
-
   showNav();
   renderNav();
-  const app = document.getElementById("app");
-  app.innerHTML = `<div class="py-16 text-center text-ink/40">Loading…</div>`;
-  try {
-    if (currentView === "dashboard") app.innerHTML = await ViewDashboard();
-    if (currentView === "products") app.innerHTML = await ViewProducts();
-    if (currentView === "sales") app.innerHTML = await ViewSales();
-    if (currentView === "credit") app.innerHTML = await ViewCredit();
-    if (currentView === "ai") {
-      app.innerHTML = await ViewAI();
-      if (pendingAIQuestion) {
-        const input = document.getElementById("ai-input");
-        if (input) input.value = pendingAIQuestion;
-        pendingAIQuestion = null;
-      }
+  const view = currentView;
+  const sameView = lastPaintedView === view && app.children.length > 0 && !app.querySelector(".skel-wrap");
+  let showingSnapshot = false;
+
+  if (!sameView) {
+    const snap = USE_SAMPLE_DATA ? null : readSnapshot(view);
+    if (snap) {
+      app.innerHTML = snap;
+      app.classList.add("is-stale");
+      showingSnapshot = true;
+    } else {
+      app.classList.remove("is-stale");
+      app.innerHTML = SKELETON_HTML;
     }
-    if (currentView === "settings") app.innerHTML = await ViewSettings();
+  }
+  revealFooter();
+
+  if (!USE_SAMPLE_DATA && !backgroundRefreshStarted) refreshSessionInBackground();
+
+  if (!shopSettings) {
+    try { shopSettings = USE_SAMPLE_DATA ? sampleSettings : await Api.getSettings(); writeCache(CACHE_KEYS.settings, shopSettings); }
+    catch { shopSettings = {}; }
+    if (stale()) return;
+  }
+
+  try {
+    let html = "";
+    if (view === "dashboard") html = await ViewDashboard();
+    if (view === "products") html = await ViewProducts();
+    if (view === "sales") html = await ViewSales();
+    if (view === "credit") html = await ViewCredit();
+    if (view === "ai") html = await ViewAI();
+    if (view === "settings") html = await ViewSettings();
+    if (stale()) return;
+    app.classList.remove("is-stale");
+    app.innerHTML = html;
+    lastPaintedView = view;
+    if (!USE_SAMPLE_DATA) writeSnapshot(view, html);
+    if (view === "ai" && pendingAIQuestion) {
+      const input = document.getElementById("ai-input");
+      if (input) input.value = pendingAIQuestion;
+      pendingAIQuestion = null;
+    }
   } catch (err) {
-    app.innerHTML = `<div class="text-center py-16 text-danger">Something went wrong: ${err.message}</div>`;
+    if (stale()) return;
+    if (showingSnapshot) {
+      // Offline or slow: keep the last saved screen readable instead of erasing it.
+      toast("Showing last saved data. Will refresh when you're back online.");
+      lastPaintedView = view;
+      return;
+    }
+    app.classList.remove("is-stale");
+    app.innerHTML = `<div class="text-center py-16"><p class="text-danger mb-4">Something went wrong: ${err.message}</p><button onclick="render()" class="bg-primary text-white font-semibold px-5 py-2.5 rounded-xl">Retry</button></div>`;
   }
 }
 
@@ -2620,7 +2780,8 @@ async function downloadReport() {
 
 // ---------------- BULK IMPORT ----------------
 
-function parseFileToRows(file) {
+async function parseFileToRows(file) {
+  await loadLib(file.name.toLowerCase().endsWith(".csv") ? "papa" : "xlsx");
   return new Promise((resolve, reject) => {
     const name = file.name.toLowerCase();
     if (name.endsWith(".csv")) {
@@ -2967,6 +3128,12 @@ if ("serviceWorker" in navigator) {
 }
 
 window.addEventListener("offline", () => document.getElementById("offline-pill").classList.remove("hidden"));
-window.addEventListener("online", () => document.getElementById("offline-pill").classList.add("hidden"));
+window.addEventListener("online", () => {
+  document.getElementById("offline-pill").classList.add("hidden");
+  // Refresh any screen that is only showing saved data.
+  if (document.getElementById("app")?.classList.contains("is-stale")) render();
+});
+if (!navigator.onLine) document.getElementById("offline-pill").classList.remove("hidden");
 
 render();
+warmLibsWhenIdle();
