@@ -1,102 +1,86 @@
 # Denquva
 
-A shop management Progressive Web App for small businesses: inventory, sales, credit sales, and an AI assistant that reads and explains your business data.
+Denquva is a business management platform that helps businesses manage products, inventory, sales, profit, customer credit, and multiple shops in one place, with AI powered business assistance.
 
-**Live app:** https://emezch93.github.io/denquva
+**Live app:** https://denquva.pages.dev
 
 ## What it does
 
 **Inventory**
-- Track products, stock levels, prices, and categories
-- Full stock movement audit trail (every change is logged, not an editable quantity field)
+- Manage products, stock levels, prices, categories, and other product details
+- Full stock movement audit trail, with every stock change recorded
 
 **Sales**
-- Multi Sale: build a cart of several products, with quantity steppers and frequently sold quick-add suggestions, and check out in one confirm instead of selling item by item
-- Every sale is tappable to view its full detail (unit price, cost, profit, exact time), banking-app style, instead of everything crammed into the list row
-- Sales history filterable by Today / This week / This month / All, with revenue and profit totals
+- Multi Sale: build a cart with multiple products, quantity controls, and frequently sold quick add suggestions
+- Complete sale details including unit price, cost, profit, and exact time
+- Sales history with filters for Today / This week / This month / All
+- Revenue and profit totals
 
 **Credit Sales**
-- Record a customer's name, the products they're taking on credit (cart style, same as Multi Sale), a discount, and the purchase date
-- Stock updates immediately, payment status stays Pending until settled
-- Multi-select several pending credit sales and mark them all Paid at once, which records them into the real sales/revenue totals on the date they were actually paid, not the date they were taken
-- Search, filter by status, sort by customer/status/date/outstanding, tap any record for full detail
+- Record customers, products purchased on credit, discounts, and purchase dates
+- Stock updates immediately while payment remains Pending until settled
+- Mark multiple pending credit sales as Paid at once
+- Payments are recorded in sales and revenue totals on the date they are actually paid
+- Search, filter, sort, and view complete credit sale details
 
-**AI assistant**
-- Read only: answers questions about your dashboard, sales, top products, and credit sales; it does not edit inventory, prices, or anything else
-- Reads uploaded receipts/invoices (photo or file) and remembers what's in them for future questions
-- Voice input, transcribed then answered the same way as typed questions
+**AI Business Assistant**
+- Read only: answers questions about dashboard data, sales, top products, and credit sales
+- Does not modify inventory, prices, sales, or other business data
+- Reads uploaded receipts and invoices from photos or files
+- Remembers uploaded receipt information for future questions
+- Voice input with transcription and AI responses
 
-**Data import**
-- Bulk CSV/Excel import for products, sales, and stock; re-uploading a file updates existing products (matched by SKU or name) instead of failing on duplicates
-- Smart import: any column layout, AI maps it to Denquva's fields, with a review step before anything is saved; supports multiple files in one go, processed one at a time
+**Data Import**
+- Bulk CSV and Excel import for products, sales, and stock
+- Existing products can be updated through SKU or name matching instead of creating duplicates
+- Smart import supports different column layouts
+- AI maps imported columns to Denquva fields
+- Review imported data before saving
+- Multiple files can be imported and processed individually
 
-**Accounts & billing**
-- Signup/login, password reset via security question
-- Multi shop/branch support under one login, each with its own products, sales, and settings
-- Paystack subscription billing (quarterly), trial period, Settings page reflects live status (Subscribed / Subscribe now)
+**Accounts & Billing**
+- User signup and login
+- Password reset through security questions
+- Multi shop and branch support under one account
+- Each shop has its own products, sales, and settings
+- Quarterly Paystack subscription billing
+- Trial period
+- Settings page reflects current subscription status
 
 **Other**
-- Nigerian Naira (₦) by default, configurable
-- Installable PWA, works offline, add to home screen
-- SEO: canonical tag, sitemap.xml, robots.txt, structured data, CodeVent Digital brand attribution
+- Nigerian Naira (₦) by default, with configurable currency
+- Installable Progressive Web App
+- Offline support
+- Add to home screen
+- SEO with canonical URL, sitemap, robots.txt, and structured data
+- CodeVent Digital attribution as the company behind Denquva
 
 ## Stack
 
-- **Frontend:** vanilla JavaScript, HTML, Tailwind CSS (compiled, not the CDN build)
+- **Frontend:** Vanilla JavaScript, HTML, Tailwind CSS
 - **Backend:** Cloudflare Workers
 - **Database:** Cloudflare D1
 - **AI:** Google Gemini API
 - **Payments:** Paystack
-- **PWA:** offline service worker with cache versioning
+- **PWA:** Service worker with offline caching and cache versioning
 
-No frameworks, no Node backend, no external database service.
+No frontend framework, no Node.js backend, and no external database service.
 
-## Project structure
+## Project Structure
 
-```
-denquva/ (repo folder name unchanged unless you rename it on GitHub)
-├── index.html              App shell, meta tags, canonical/SEO tags
+```text
+denquva/
+├── index.html              App shell, metadata, canonical and SEO tags
 ├── service-worker.js       Offline caching
 ├── manifest.json           PWA manifest
-├── robots.txt / sitemap.xml
-├── tailwind.config.js      Tailwind build config
+├── robots.txt
+├── sitemap.xml
+├── tailwind.config.js      Tailwind configuration
 ├── migrations/
-│   └── credit_sales.sql     Run once against D1 before deploying credit sales
+│   └── credit_sales.sql    D1 migration
 ├── css/
-│   ├── tailwind.css         Compiled Tailwind output
-│   └── app.css               Custom styles
+│   ├── tailwind.css        Compiled Tailwind output
+│   └── app.css             Custom styles
 ├── js/
-│   └── app.js                 All application logic and UI rendering
-└── icons/                   PWA icons
-```
-
-The backend (Cloudflare Worker + D1) lives in a separate `worker.js`, deployed independently via `wrangler`.
-
-## Local development
-
-This is a static frontend, no build server required to run it.
-
-1. Clone the repo
-2. Serve the folder with any static server, e.g. `npx serve .`
-3. Open in your browser
-
-If you change any Tailwind classes in `index.html` or `js/app.js`, rebuild the CSS:
-
-```
-npm install
-npx tailwindcss -i ./css/tailwind-input.css -o ./css/tailwind.css --minify
-```
-
-Bump `CACHE_NAME` in `service-worker.js` on every deploy that changes `index.html`, `app.js`, or the CSS, otherwise returning users keep the old cached version.
-
-## Deployment
-
-Frontend deploys automatically via Cloudflare Pages on every push to `main` (no build command, output directory is repo root). Backend deploys separately with `npx wrangler deploy`. Any new migration under `migrations/` needs to be run against D1 once before the matching backend code goes live.
-
-## Status
-
-Active development. Built and maintained by [CodeVent Digital](https://codeventdigital.site).
-
-## License
-
-All rights reserved.
+│   └── app.js              Application logic and UI rendering
+└── icons/                  PWA icons
