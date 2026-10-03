@@ -691,7 +691,7 @@ async function render() {
           hideNav();
           document.getElementById("app").innerHTML = `
             <div class="max-w-sm mx-auto mt-16 text-center">
-              <div class="text-4xl mb-3">📡</div>
+              <div class="flex justify-center mb-3"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-ink/40"><path d="M2 2 22 22"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M5 12.9a10 10 0 0 1 5.17-2.69"/><path d="M19 12.9a10 10 0 0 0-2.26-1.94"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></div>
               <h1 class="font-display text-xl font-extrabold mb-2">Can't reach Denquva</h1>
               <p class="text-sm text-ink/50 mb-5">Check your connection and try again. You're still logged in.</p>
               <button onclick="render()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Retry</button>
@@ -906,7 +906,10 @@ async function ViewPaymentPending() {
     : "Complete your payment to start using Denquva.";
   return `
     <div class="max-w-sm mx-auto mt-16 text-center">
-      <div class="text-4xl mb-3">${isTrialExpired ? "🎉" : "⏳"}</div>
+      <div class="flex justify-center mb-3">${isTrialExpired
+        ? `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`
+        : `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`
+      }</div>
       <h1 class="font-display text-xl font-extrabold mb-2">${isTrialExpired ? "Trial complete" : "Almost there"}</h1>
       <p class="text-sm text-ink/50 mb-5">${message}</p>
       <button onclick="resumePaymentFlow()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mb-3">Continue to payment</button>
@@ -1072,7 +1075,7 @@ async function ViewProducts() {
       <button onclick="openProductForm()" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full text-sm whitespace-nowrap">+ Add</button>
     </div>
     <div class="flex justify-end mb-3">
-      <button onclick="openMultiSaleModal()" class="bg-amber text-white font-semibold px-4 py-2 rounded-full text-sm">🛒 Multi Sale</button>
+      <button onclick="openMultiSaleModal()" class="bg-amber text-white font-semibold px-4 py-2 rounded-full text-sm flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>Multi Sale</button>
     </div>
     <div class="grid sm:grid-cols-2 gap-3">${cards}</div>
   `;
@@ -1095,7 +1098,7 @@ function productCard(p) {
         <div class="flex items-center gap-3">
           ${p.image_url
             ? `<div class="w-12 h-12 rounded-xl bg-cover bg-center flex-shrink-0" style="background-image:url('${p.image_url}')"></div>`
-            : `<div class="w-12 h-12 rounded-xl bg-black/5 flex items-center justify-center text-lg flex-shrink-0">📦</div>`}
+            : `<div class="w-12 h-12 rounded-xl bg-black/5 flex items-center justify-center text-ink/30 flex-shrink-0"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></div>`}
           <div>
             <div class="font-display font-bold">${p.name}</div>
             <div class="text-xs text-ink/45">${p.category || "Uncategorized"}</div>
@@ -1177,8 +1180,8 @@ function openProductForm(id) {
     <h2 class="font-display text-xl font-extrabold mb-4">${product ? "Edit product" : "Add product"}</h2>
     <div class="space-y-3">
       <div class="flex items-center gap-3">
-        <div id="product-photo-preview" class="w-14 h-14 rounded-xl bg-black/5 bg-cover bg-center flex items-center justify-center text-lg flex-shrink-0"
-          style="${product?.image_url ? `background-image:url('${product.image_url}')` : ""}">${product?.image_url ? "" : "📦"}</div>
+        <div id="product-photo-preview" class="w-14 h-14 rounded-xl bg-black/5 bg-cover bg-center flex items-center justify-center text-ink/30 flex-shrink-0"
+          style="${product?.image_url ? `background-image:url('${product.image_url}')` : ""}">${product?.image_url ? "" : `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>`}</div>
         <label class="text-sm font-semibold text-primary cursor-pointer">
           Add photo
           <input type="file" accept="image/*" class="hidden" onchange="onProductPhotoSelected(event)" />
@@ -1187,7 +1190,7 @@ function openProductForm(id) {
       <input id="pf-name" placeholder="Product name" value="${product?.name || ""}" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
       <div class="flex gap-2">
         <input id="pf-desc" placeholder="Description" value="${product?.description || ""}" class="flex-1 border border-black/10 rounded-xl px-3 py-2.5" />
-        <button onclick="generateAIDescription()" class="text-xs bg-primary-light text-primary-dark font-semibold px-3 rounded-xl whitespace-nowrap">✨ AI</button>
+        <button onclick="generateAIDescription()" class="text-xs bg-primary-light text-primary-dark font-semibold px-3 rounded-xl whitespace-nowrap flex items-center gap-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>AI</button>
       </div>
       <div class="grid grid-cols-2 gap-2">
         <input id="pf-category" placeholder="Category" value="${product?.category || ""}" class="border border-black/10 rounded-xl px-3 py-2.5" />
@@ -1975,13 +1978,13 @@ async function ViewAI() {
     <div class="card p-4 mb-3 min-h-[50vh] flex flex-col justify-end" id="ai-thread">${bubbles}</div>
     ${pendingAttachment ? `
       <div class="flex items-center justify-between bg-primary-light text-primary-dark text-xs font-medium rounded-full px-3 py-2 mb-2">
-        <span>📎 ${pendingAttachment.name}</span>
+        <span class="flex items-center gap-1.5"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>${pendingAttachment.name}</span>
         <button onclick="clearAttachment()" class="font-bold">✕</button>
       </div>
     ` : ""}
     <div class="flex gap-2">
       <label title="Attach a receipt, invoice, or document to this question only" class="w-11 h-11 rounded-full bg-surface border border-black/10 flex items-center justify-center flex-shrink-0 cursor-pointer">
-        📎
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
         <input type="file" accept="image/*,.pdf" class="hidden" onchange="onAttachmentSelected(event)" />
       </label>
       <button id="mic-btn" onclick="toggleVoiceInput()" title="Record a voice question"
@@ -2236,7 +2239,7 @@ async function sendAIMessage() {
   const question = input.value.trim();
   if (!question) return;
   const attachment = pendingAttachment;
-  aiMessages.push({ role: "user", text: attachment ? `📎 ${attachment.name}\n${question}` : question });
+  aiMessages.push({ role: "user", text: attachment ? `Attached: ${attachment.name}\n${question}` : question });
   input.value = "";
   pendingAttachment = null;
   const replyIndex = aiMessages.length;
@@ -2393,8 +2396,8 @@ async function ViewSettings() {
 
     <div class="card p-4 space-y-3">
       <div class="flex items-center gap-3">
-        <div id="logo-preview" class="w-14 h-14 rounded-full bg-black/5 bg-cover bg-center flex items-center justify-center text-xl overflow-hidden"
-          style="${s.logo_url ? `background-image:url('${s.logo_url}')` : ""}">${s.logo_url ? "" : "🏪"}</div>
+        <div id="logo-preview" class="w-14 h-14 rounded-full bg-black/5 bg-cover bg-center flex items-center justify-center text-ink/30 overflow-hidden"
+          style="${s.logo_url ? `background-image:url('${s.logo_url}')` : ""}">${s.logo_url ? "" : `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7h20"/><path d="M19 7V4a1 1 0 0 0-1-1H6a1 1 0 0 0-1 1v3"/><path d="M4 7v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7"/><path d="M8 14h8"/></svg>`}</div>
         <label class="text-sm font-semibold text-primary cursor-pointer">
           Change logo
           <input type="file" accept="image/*" class="hidden" onchange="onLogoSelected(event)" />
