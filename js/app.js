@@ -905,7 +905,15 @@ async function render() {
     if (view === "settings") html = await ViewSettings();
     if (stale()) return;
     app.classList.remove("is-stale");
+    // Keep the cursor in a search box that triggers its own re-render while typing.
+    const ae = document.activeElement;
+    const keep = ae && ae.id && app.contains(ae) && typeof ae.selectionStart === "number"
+      ? { id: ae.id, start: ae.selectionStart, end: ae.selectionEnd } : null;
     app.innerHTML = html;
+    if (keep) {
+      const el = document.getElementById(keep.id);
+      if (el) { el.focus(); try { el.setSelectionRange(keep.start, keep.end); } catch {} }
+    }
     lastPaintedView = paintKey;
     if (!USE_SAMPLE_DATA) writeSnapshot(view, html);
     if (view === "ai" && pendingAIQuestion) {
