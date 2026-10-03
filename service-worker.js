@@ -1,4 +1,4 @@
-const CACHE_NAME = "denquva-shell-v6";
+const CACHE_NAME = "denquva-shell-v7";
 const SHELL_FILES = [
   "./",
   "./index.html",
