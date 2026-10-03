@@ -1,4 +1,4 @@
-const CACHE_NAME = "denquva-shell-v8";
+const CACHE_NAME = "denquva-shell-v9";
 const RUNTIME_CACHE = "denquva-runtime-v1";
 const SHELL_FILES = [
   "./",
