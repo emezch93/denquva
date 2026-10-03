@@ -1,4 +1,4 @@
-const CACHE_NAME = "denquva-shell-v9";
+const CACHE_NAME = "denquva-shell-v10";
 const RUNTIME_CACHE = "denquva-runtime-v1";
 const SHELL_FILES = [
   "./",
@@ -66,9 +66,9 @@ async function staleWhileRevalidate(event, cacheName, cacheKey, fetchTarget) {
 
   const network = fetch(fetchTarget)
     .then((response) => {
-      if (response && (response.ok || response.type === "opaque")) {
+      if (response && response.status !== 206 && (response.ok || response.type === "opaque")) {
         const clean = stripRedirect(response);
-        cache.put(cacheKey, clean.clone());
+        cache.put(cacheKey, clean.clone()).catch(() => {});
         return clean;
       }
       return response;
