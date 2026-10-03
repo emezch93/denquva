@@ -2,7 +2,7 @@
 
 A shop management Progressive Web App for small businesses: inventory, sales, credit sales, and an AI assistant that reads and explains your business data.
 
-**Live app:** https://denquva.pages.dev
+**Live app:** https://emezch93.github.io/denquva
 
 ## What it does
 
