@@ -66,13 +66,22 @@ function logout() {
   localStorage.removeItem("denquva_token");
   localStorage.removeItem("denquva_active_shop_id");
   clearLocalCaches();
+  authMode = "login";
+  forgotStep = "email";
+  backgroundRefreshStarted = false;
+  lastPaintedView = null;
   render();
 }
 
 // ---------------- SPEED LAYER ----------------
 // The app paints from the last known state first, then refreshes from the
 // network in the background, so a slow connection never blocks the screen.
-const CACHE_KEYS = { shop: "denquva_cache_shop", settings: "denquva_cache_settings", snapPrefix: "denquva_snap_" };
+// snapPrefix is versioned: bumping it makes old saved screens (built with an
+// older layout) disappear instead of flashing before the fresh data arrives.
+const CACHE_KEYS = { shop: "denquva_cache_shop", settings: "denquva_cache_settings", snapPrefix: "denquva_snap2_" };
+try {
+  Object.keys(localStorage).filter(k => k.startsWith("denquva_snap_")).forEach(k => localStorage.removeItem(k));
+} catch {}
 const NO_SNAPSHOT_VIEWS = ["ai", "settings"];
 
 function readCache(key) {
@@ -752,6 +761,23 @@ async function maybeRefreshTrialStatus() {
   }
 }
 
+// Replaces a container's HTML but keeps the cursor in whichever input the
+// person was typing in, so re-rendering on every keystroke feels normal.
+function setHtmlKeepingFocus(el, html) {
+  const ae = document.activeElement;
+  const keep = ae && ae.id && el.contains(ae)
+    ? { id: ae.id, start: typeof ae.selectionStart === "number" ? ae.selectionStart : null, end: ae.selectionEnd }
+    : null;
+  el.innerHTML = html;
+  if (keep) {
+    const node = document.getElementById(keep.id);
+    if (node) {
+      node.focus();
+      if (keep.start !== null) { try { node.setSelectionRange(keep.start, keep.end); } catch {} }
+    }
+  }
+}
+
 let renderSeq = 0;
 let lastPaintedView = null; // "<shopId>:<view>"
 let backgroundRefreshStarted = false;
@@ -870,6 +896,7 @@ async function render() {
   showNav();
   renderNav();
   const view = currentView;
+  app.classList.toggle("wide-view", view === "products");
   const paintKey = `${activeShopId}:${view}`;
   const sameView = lastPaintedView === paintKey && app.children.length > 0 && !app.querySelector(".skel-wrap");
   let showingSnapshot = false;
@@ -1060,14 +1087,19 @@ async function submitAuth() {
   btn.disabled = true;
   btn.classList.add("opacity-60");
   btn.textContent = authMode === "signup" ? "Creating account…" : "Logging in…";
+  const restoreBtn = () => {
+    btn.disabled = false;
+    btn.classList.remove("opacity-60");
+    btn.textContent = originalLabel;
+  };
 
   try {
     if (authMode === "signup") {
       const shop_name = document.getElementById("auth-shopname").value.trim();
       const security_question = document.getElementById("auth-security-question").value.trim();
       const security_answer = document.getElementById("auth-security-answer").value.trim();
-      if (!shop_name) { toast("Shop name is required"); return; }
-      if (!security_question || !security_answer) { toast("A security question and answer are required, they're how you recover your password"); return; }
+      if (!shop_name) { toast("Shop name is required"); restoreBtn(); return; }
+      if (!security_question || !security_answer) { toast("A security question and answer are required, they're how you recover your password"); restoreBtn(); return; }
       const result = await Api.signup({ shop_name, email, password, security_question, security_answer });
       authToken = result.token;
       localStorage.setItem("denquva_token", authToken);
@@ -1087,9 +1119,7 @@ async function submitAuth() {
     }
   } catch (err) {
     toast(err.message);
-    btn.disabled = false;
-    btn.classList.remove("opacity-60");
-    btn.textContent = originalLabel;
+    restoreBtn();
   }
 }
 
@@ -1276,46 +1306,45 @@ async function ViewProducts() {
     <div class="flex justify-end mb-3">
       <button onclick="openMultiSaleModal()" class="bg-amber text-white font-semibold px-4 py-2 rounded-full text-sm flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>Multi Sale</button>
     </div>
-    <div class="grid sm:grid-cols-2 gap-3">${cards}</div>
+    <div class="product-grid">${cards}</div>
   `;
 }
 
 function productCard(p) {
   const isLow = p.quantity <= p.low_stock_threshold;
+  const thumb = p.image_url
+    ? `<div class="product-thumb bg-cover bg-center" style="background-image:url('${p.image_url}')"></div>`
+    : `<div class="product-thumb bg-black/5 flex items-center justify-center text-ink/30"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></div>`;
   return `
     <div class="relative overflow-hidden rounded-2xl">
       <div class="absolute inset-0 bg-danger flex items-center justify-between px-6 text-white font-semibold rounded-2xl" aria-hidden="true">
         <span>Delete</span><span>Delete</span>
       </div>
-      <div class="card p-4 flex flex-col gap-2 relative bg-surface h-full"
+      <div class="card product-card p-3 flex flex-col gap-2 relative bg-surface h-full"
         style="touch-action: pan-y;"
         ontouchstart="swipeStart(event, ${p.id})"
         ontouchmove="swipeMove(event, ${p.id})"
         ontouchend="swipeEnd(event, ${p.id})"
         ontouchcancel="swipeCancel()">
-      <div class="flex items-start justify-between gap-3">
-        <div class="flex items-center gap-3">
-          ${p.image_url
-            ? `<div class="w-12 h-12 rounded-xl bg-cover bg-center flex-shrink-0" style="background-image:url('${p.image_url}')"></div>`
-            : `<div class="w-12 h-12 rounded-xl bg-black/5 flex items-center justify-center text-ink/30 flex-shrink-0"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></div>`}
-          <div>
-            <div class="font-display font-bold">${p.name}</div>
-            <div class="text-xs text-ink/45">${p.category || "Uncategorized"}</div>
+        <div class="flex items-start gap-2.5">
+          ${thumb}
+          <div class="min-w-0 flex-1">
+            <div class="font-display font-bold text-sm product-name">${p.name}</div>
+            <div class="text-xs text-ink/45 truncate">${p.category || "Uncategorized"}</div>
           </div>
         </div>
-        <div class="text-right">
-          <div class="font-semibold">${formatMoney(p.selling_price)}</div>
-          <div class="text-xs ${isLow ? "text-danger font-semibold" : "text-ink/45"}">${p.quantity} available${isLow ? " · LOW" : ""}</div>
+        <div class="flex items-end justify-between gap-2">
+          <div class="font-semibold text-sm">${formatMoney(p.selling_price)}</div>
+          <div class="text-xs text-right ${isLow ? "text-danger font-semibold" : "text-ink/45"}">${p.quantity} left${isLow ? " · LOW" : ""}</div>
         </div>
-      </div>
-      <div class="flex gap-2 mt-1">
-        <button onclick="openSellModal(${p.id})" title="Record a sale, reduces stock automatically" class="flex-1 bg-primary text-white font-semibold py-2.5 rounded-xl text-sm">SELL</button>
-        <button onclick="openStockModal(${p.id})" title="Restock this product and log the movement" class="flex-1 bg-amber-light text-amber-dark font-semibold py-2.5 rounded-xl text-sm">ADD STOCK</button>
-      </div>
-      <div class="flex gap-3 text-xs text-ink/45 pt-1">
-        <button onclick="openProductForm(${p.id})" class="underline">Edit</button>
-        <button onclick="confirmDeleteProduct(${p.id})" class="underline">Delete</button>
-      </div>
+        <div class="grid grid-cols-2 gap-1.5 mt-auto">
+          <button onclick="openSellModal(${p.id})" title="Record a sale, reduces stock automatically" class="bg-primary text-white font-semibold py-2 rounded-xl text-xs whitespace-nowrap">SELL</button>
+          <button onclick="openStockModal(${p.id})" title="Restock this product and log the movement" class="bg-amber-light text-amber-dark font-semibold py-2 rounded-xl text-xs whitespace-nowrap">ADD STOCK</button>
+        </div>
+        <div class="flex gap-3 text-xs text-ink/45">
+          <button onclick="openProductForm(${p.id})" class="underline">Edit</button>
+          <button onclick="confirmDeleteProduct(${p.id})" class="underline">Delete</button>
+        </div>
       </div>
     </div>`;
 }
@@ -1361,10 +1390,9 @@ function swipeEnd(event, id) {
   setTimeout(() => { el.style.transition = ""; }, 200);
   const swipedId = swipeState.id;
   swipeState = null;
-  // Calls the exact same function the existing "Delete" link calls,
-  // same confirm() dialog, same request, this is only a second way to
-  // trigger it, not a separate delete path.
-  if (shouldDelete) confirmDeleteProduct(swipedId);
+  // Swiping is already a deliberate gesture, so it deletes straight away
+  // with no popup. (Products are archived, not erased, on the server.)
+  if (shouldDelete) deleteProductNow(swipedId);
 }
 
 function swipeCancel() {
@@ -1374,6 +1402,7 @@ function swipeCancel() {
 function openProductForm(id) {
   const product = id ? cachedProducts.find(p => p.id === id) : null;
   pendingProductImage = product?.image_url || null;
+  originalProductImage = product?.image_url || null;
   const modal = document.getElementById("product-modal");
   document.getElementById("product-modal-body").innerHTML = `
     <h2 class="font-display text-xl font-extrabold mb-4">${product ? "Edit product" : "Add product"}</h2>
@@ -1381,10 +1410,10 @@ function openProductForm(id) {
       <div class="flex items-center gap-3">
         <div id="product-photo-preview" class="w-14 h-14 rounded-xl bg-black/5 bg-cover bg-center flex items-center justify-center text-ink/30 flex-shrink-0"
           style="${product?.image_url ? `background-image:url('${product.image_url}')` : ""}">${product?.image_url ? "" : `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>`}</div>
-        <label class="text-sm font-semibold text-primary cursor-pointer">
-          Add photo
-          <input type="file" accept="image/*" class="hidden" onchange="onProductPhotoSelected(event)" />
-        </label>
+        <div class="flex flex-col items-start gap-1">
+          <label id="product-photo-label" class="text-sm font-semibold text-primary cursor-pointer">${product?.image_url ? "Change photo" : "Add photo"}<input type="file" accept="image/*" class="hidden" onchange="onProductPhotoSelected(event)" /></label>
+          <button type="button" id="product-photo-remove" onclick="removeProductPhoto()" class="text-xs font-semibold text-danger ${product?.image_url ? "" : "hidden"}">Remove photo</button>
+        </div>
       </div>
       <input id="pf-name" placeholder="Product name" value="${product?.name || ""}" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
       <div class="flex gap-2">
@@ -1414,15 +1443,33 @@ function openProductForm(id) {
 }
 
 let pendingProductImage = null;
+let originalProductImage = null;
+const PRODUCT_PLACEHOLDER_SVG = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>`;
+
+function refreshProductPhotoControls() {
+  const has = !!pendingProductImage;
+  const preview = document.getElementById("product-photo-preview");
+  if (preview) {
+    preview.style.backgroundImage = has ? `url('${pendingProductImage}')` : "";
+    preview.innerHTML = has ? "" : PRODUCT_PLACEHOLDER_SVG;
+  }
+  const label = document.getElementById("product-photo-label");
+  if (label) label.firstChild.textContent = has ? "Change photo" : "Add photo";
+  const remove = document.getElementById("product-photo-remove");
+  if (remove) remove.classList.toggle("hidden", !has);
+}
+
+function removeProductPhoto() {
+  pendingProductImage = "";
+  refreshProductPhotoControls();
+}
 
 async function onProductPhotoSelected(event) {
   const file = event.target.files[0];
   if (!file) return;
   try {
     pendingProductImage = await compressImageToDataUrl(file, 400, 400);
-    const preview = document.getElementById("product-photo-preview");
-    preview.style.backgroundImage = `url('${pendingProductImage}')`;
-    preview.textContent = "";
+    refreshProductPhotoControls();
   } catch (err) {
     toast("Could not read that image, try a different file");
   }
@@ -1448,7 +1495,8 @@ async function saveProduct(id) {
   };
   if (!data.name) { toast("Product name is required"); return; }
   if (!id) data.quantity = parseInt(document.getElementById("pf-qty").value) || 0;
-  if (pendingProductImage) data.image_url = pendingProductImage;
+  // Only send the photo when it changed. An empty string clears it.
+  if ((pendingProductImage ?? "") !== (originalProductImage ?? "")) data.image_url = pendingProductImage ?? "";
 
   try {
     if (id) await Api.updateProduct(id, data);
@@ -1457,6 +1505,15 @@ async function saveProduct(id) {
     pendingProductImage = null;
     closeModal("product-modal");
     toast(id ? "Product updated" : "Product added");
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function deleteProductNow(id) {
+  try {
+    await Api.deleteProduct(id);
     render();
   } catch (err) {
     toast(err.message);
@@ -1575,18 +1632,18 @@ function renderMultiSaleModal() {
         const inCart = multiSaleCart.has(p.id);
         const outOfStock = p.quantity <= 0;
         return `
-        <div class="flex items-center justify-between gap-2 py-2 border-b border-black/5 last:border-0">
+        <div class="picker-tile">
           <div class="min-w-0">
-            <div class="font-medium truncate">${p.name}</div>
-            <div class="text-xs text-ink/45">${formatMoney(p.selling_price)} · ${p.quantity} available</div>
+            <div class="font-medium text-sm truncate">${p.name}</div>
+            <div class="text-xs text-ink/45">${formatMoney(p.selling_price)} · ${p.quantity} left</div>
           </div>
           <button onclick="addToMultiSaleCart(${p.id})" ${outOfStock ? "disabled" : ""}
-            class="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full ${inCart ? "bg-primary-light text-primary-dark" : outOfStock ? "bg-black/5 text-ink/30" : "bg-primary text-white"}">
+            class="w-full text-xs font-semibold px-3 py-1.5 rounded-full ${inCart ? "bg-primary-light text-primary-dark" : outOfStock ? "bg-black/5 text-ink/30" : "bg-primary text-white"}">
             ${outOfStock ? "Out of stock" : inCart ? "Added" : "+ Add"}
           </button>
         </div>`;
       }).join("")
-    : `<div class="text-sm text-ink/40 py-4 text-center">No products match "${multiSaleSearchTerm}"</div>`;
+    : `<div class="text-sm text-ink/40 py-4 text-center col-span-full">No products match "${multiSaleSearchTerm}"</div>`;
 
   const cartHtml = cartCount
     ? [...multiSaleCart.entries()].map(([id, qty]) => {
@@ -1608,7 +1665,7 @@ function renderMultiSaleModal() {
       }).join("")
     : `<div class="text-sm text-ink/40 py-3 text-center">No items selected yet</div>`;
 
-  document.getElementById("multisale-modal-body").innerHTML = `
+  setHtmlKeepingFocus(document.getElementById("multisale-modal-body"), `
     <h2 class="font-display text-xl font-extrabold mb-3">Multi Sale</h2>
 
     <input id="multisale-search" type="text" placeholder="Search products to add"
@@ -1622,7 +1679,7 @@ function renderMultiSaleModal() {
       <div class="flex gap-2 overflow-x-auto pb-1">${suggestionChips}</div>
     </div>` : ""}
 
-    <div class="max-h-40 overflow-y-auto border border-black/5 rounded-xl px-3 mb-4">${productListHtml}</div>
+    <div class="max-h-56 overflow-y-auto border border-black/5 rounded-xl p-2 mb-4"><div class="picker-grid">${productListHtml}</div></div>
 
     <div class="border-t border-black/10 pt-3 mb-3">
       <div class="flex items-center justify-between mb-2">
@@ -1636,15 +1693,7 @@ function renderMultiSaleModal() {
       <button onclick="closeModal('multisale-modal')" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
       <button onclick="confirmMultiSale()" ${cartCount ? "" : "disabled"} class="flex-1 py-2.5 rounded-xl font-semibold ${cartCount ? "bg-primary text-white" : "bg-black/10 text-ink/30"}">Confirm Sale</button>
     </div>
-  `;
-
-  // Search input loses focus on every re-render since innerHTML is
-  // fully replaced, so put the cursor back and keep typing smooth.
-  const searchInput = document.getElementById("multisale-search");
-  if (document.activeElement !== searchInput) {
-    const active = document.activeElement;
-    if (active && active.id === "multisale-search") searchInput.focus();
-  }
+  `);
 }
 
 function addToMultiSaleCart(productId) {
@@ -2040,18 +2089,18 @@ function renderCreditSaleModal() {
         const inCart = creditSaleCart.has(p.id);
         const outOfStock = p.quantity <= 0;
         return `
-        <div class="flex items-center justify-between gap-2 py-2 border-b border-black/5 last:border-0">
+        <div class="picker-tile">
           <div class="min-w-0">
-            <div class="font-medium truncate">${p.name}</div>
-            <div class="text-xs text-ink/45">${formatMoney(p.selling_price)} · ${p.quantity} available</div>
+            <div class="font-medium text-sm truncate">${p.name}</div>
+            <div class="text-xs text-ink/45">${formatMoney(p.selling_price)} · ${p.quantity} left</div>
           </div>
           <button onclick="addToCreditSaleCart(${p.id})" ${outOfStock ? "disabled" : ""}
-            class="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full ${inCart ? "bg-primary-light text-primary-dark" : outOfStock ? "bg-black/5 text-ink/30" : "bg-primary text-white"}">
+            class="w-full text-xs font-semibold px-3 py-1.5 rounded-full ${inCart ? "bg-primary-light text-primary-dark" : outOfStock ? "bg-black/5 text-ink/30" : "bg-primary text-white"}">
             ${outOfStock ? "Out of stock" : inCart ? "Added" : "+ Add"}
           </button>
         </div>`;
       }).join("")
-    : `<div class="text-sm text-ink/40 py-4 text-center">No products match "${creditSaleSearchTerm}"</div>`;
+    : `<div class="text-sm text-ink/40 py-4 text-center col-span-full">No products match "${creditSaleSearchTerm}"</div>`;
 
   const cartHtml = cartCount
     ? [...creditSaleCart.entries()].map(([id, qty]) => {
@@ -2073,10 +2122,10 @@ function renderCreditSaleModal() {
       }).join("")
     : `<div class="text-sm text-ink/40 py-3 text-center">No items selected yet</div>`;
 
-  document.getElementById("creditsale-modal-body").innerHTML = `
+  setHtmlKeepingFocus(document.getElementById("creditsale-modal-body"), `
     <h2 class="font-display text-xl font-extrabold mb-3">New Credit Sale</h2>
 
-    <input type="text" placeholder="Customer name" value="${creditSaleCustomerName}"
+    <input id="creditsale-customer" type="text" placeholder="Customer name" value="${creditSaleCustomerName}"
       oninput="creditSaleCustomerName = this.value"
       class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
 
@@ -2085,7 +2134,7 @@ function renderCreditSaleModal() {
       oninput="creditSaleSearchTerm = this.value; renderCreditSaleModal()"
       class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
 
-    <div class="max-h-40 overflow-y-auto border border-black/5 rounded-xl px-3 mb-4">${productListHtml}</div>
+    <div class="max-h-56 overflow-y-auto border border-black/5 rounded-xl p-2 mb-4"><div class="picker-grid">${productListHtml}</div></div>
 
     <div class="border-t border-black/10 pt-3 mb-3">
       <h3 class="font-display font-bold mb-2">Items (${cartCount})</h3>
@@ -2098,7 +2147,7 @@ function renderCreditSaleModal() {
     </div>
     <div class="flex items-center justify-between gap-2 mb-3">
       <label class="text-sm text-ink/50">Discount</label>
-      <input type="number" min="0" step="any" value="${creditSaleDiscount}"
+      <input id="creditsale-discount" type="number" min="0" step="any" value="${creditSaleDiscount}"
         oninput="creditSaleDiscount = this.value; renderCreditSaleModal()"
         class="w-28 border border-black/10 rounded-lg px-2 py-1.5 text-right" />
     </div>
@@ -2111,10 +2160,7 @@ function renderCreditSaleModal() {
       <button onclick="closeModal('creditsale-modal')" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
       <button onclick="confirmCreditSale()" ${cartCount ? "" : "disabled"} class="flex-1 py-2.5 rounded-xl font-semibold ${cartCount ? "bg-primary text-white" : "bg-black/10 text-ink/30"}">Record Sale</button>
     </div>
-  `;
-
-  const searchInput = document.getElementById("creditsale-search");
-  if (searchInput && document.activeElement === document.body) searchInput.focus();
+  `);
 }
 
 function addToCreditSaleCart(productId) {
@@ -2566,6 +2612,8 @@ function blobToBase64(blob) {
 async function ViewSettings() {
   const s = USE_SAMPLE_DATA ? sampleSettings : await Api.getSettings();
   shopSettings = s;
+  originalLogo = s.logo_url || "";
+  pendingLogoDataUrl = null;
   const shops = USE_SAMPLE_DATA ? [] : await Api.listShops();
 
   return `
@@ -2597,10 +2645,10 @@ async function ViewSettings() {
       <div class="flex items-center gap-3">
         <div id="logo-preview" class="w-14 h-14 rounded-full bg-black/5 bg-cover bg-center flex items-center justify-center text-ink/30 overflow-hidden"
           style="${s.logo_url ? `background-image:url('${s.logo_url}')` : ""}">${s.logo_url ? "" : `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7h20"/><path d="M19 7V4a1 1 0 0 0-1-1H6a1 1 0 0 0-1 1v3"/><path d="M4 7v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7"/><path d="M8 14h8"/></svg>`}</div>
-        <label class="text-sm font-semibold text-primary cursor-pointer">
-          Change logo
-          <input type="file" accept="image/*" class="hidden" onchange="onLogoSelected(event)" />
-        </label>
+        <div class="flex flex-col items-start gap-1">
+          <label id="logo-label" class="text-sm font-semibold text-primary cursor-pointer">${s.logo_url ? "Change logo" : "Add logo"}<input type="file" accept="image/*" class="hidden" onchange="onLogoSelected(event)" /></label>
+          <button type="button" id="logo-remove" onclick="removeLogo()" class="text-xs font-semibold text-danger ${s.logo_url ? "" : "hidden"}">Remove logo</button>
+        </div>
       </div>
       <div>
         <label class="text-xs text-ink/50">Business name</label>
@@ -2644,6 +2692,7 @@ async function ViewSettings() {
       <div id="import-file-info"></div>
       <p class="text-xs text-ink/40 mb-2">First row must be column headers matching the names above. Products import creates new products or updates existing ones matched by SKU or name. Sales import logs history without changing current stock. Stock import adds to current stock, same as Add Stock.</p>
       <button onclick="runBulkImport()" class="w-full bg-amber text-white font-semibold py-2.5 rounded-xl">Import file</button>
+      <div id="import-review"></div>
 
       <div class="border-t border-black/5 mt-4 pt-4">
         <p class="text-sm font-medium mb-1">File in a different format?</p>
@@ -2889,6 +2938,12 @@ function clearFileSelection(inputId) {
   if (inputId === "smart-import-file") {
     smartImportQueue = [];
     smartImportTotalFiles = 0;
+    smartImportState = null;
+    importPanel("smart-import-review", "");
+  }
+  if (inputId === "import-file") {
+    bulkImportPending = null;
+    importPanel("import-review", "");
   }
 }
 
@@ -2909,7 +2964,77 @@ function mapImportRow(row, fields) {
   return mapped;
 }
 
+// Imports are sent in small batches so very large files work (the server
+// accepts up to 500 rows per request) and so a long import can be stopped.
+const IMPORT_BATCH_SIZE = 100;
+let importRunning = false;
+let importCancelRequested = false;
+let bulkImportPending = null; // { type, rows }
+
+const IMPORT_TYPE_LABELS = { products: "product", sales: "sales history", stock: "stock addition" };
+
+function importPanel(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+}
+
+function importSummary(type, agg) {
+  const base = type === "products"
+    ? `${agg.created} added, ${agg.updated} updated, skipped ${agg.skipped}`
+    : `Imported ${agg.imported}, skipped ${agg.skipped}`;
+  if (agg.error) return `Import stopped: ${agg.error}. ${agg.done} of ${agg.total} rows were processed. ${base}`;
+  if (agg.cancelled) return `Import cancelled. ${agg.done} of ${agg.total} rows were already processed. ${base}`;
+  return base;
+}
+
+async function importRowsInChunks(type, rows, panelId) {
+  importRunning = true;
+  importCancelRequested = false;
+  const total = rows.length;
+  const agg = { created: 0, updated: 0, imported: 0, skipped: 0, errors: [], done: 0, total, cancelled: false, error: null };
+  try {
+    for (let i = 0; i < total; i += IMPORT_BATCH_SIZE) {
+      if (importCancelRequested) { agg.cancelled = true; break; }
+      importPanel(panelId, `
+        <div class="bg-primary-light text-primary-dark text-sm rounded-xl p-3 mt-3">
+          <p class="mb-2">Importing… ${agg.done} of ${total} rows</p>
+          ${total > IMPORT_BATCH_SIZE
+            ? `<button onclick="requestImportCancel()" class="w-full bg-white text-danger font-semibold py-2 rounded-lg text-sm border border-danger/20">Cancel import</button>
+               <p class="text-xs mt-2 text-primary-dark/70">Rows already imported stay saved.</p>`
+            : ""}
+        </div>`);
+      const chunk = rows.slice(i, i + IMPORT_BATCH_SIZE);
+      let r;
+      try {
+        r = type === "products" ? await Api.importProducts(chunk)
+          : type === "sales" ? await Api.importSales(chunk)
+          : await Api.importStock(chunk);
+      } catch (err) {
+        agg.error = err.message || "Import failed";
+        break;
+      }
+      agg.created += r.created || 0;
+      agg.updated += r.updated || 0;
+      agg.imported += r.imported || 0;
+      agg.skipped += r.skipped || 0;
+      (r.errors || []).forEach(e => { if (agg.errors.length < 50) agg.errors.push({ ...e, row: e.row + i }); });
+      agg.done += chunk.length;
+    }
+    if (!agg.error && importCancelRequested && agg.done < total) agg.cancelled = true;
+  } finally {
+    importRunning = false;
+    importCancelRequested = false;
+  }
+  return agg;
+}
+
+function requestImportCancel() {
+  importCancelRequested = true;
+  toast("Cancelling after the current batch…");
+}
+
 async function runBulkImport() {
+  if (importRunning) return;
   const type = document.getElementById("import-type").value;
   const fileInput = document.getElementById("import-file");
   const file = fileInput.files[0];
@@ -2919,30 +3044,52 @@ async function runBulkImport() {
     const rawRows = await parseFileToRows(file);
     if (!rawRows.length) { toast("That file has no rows"); return; }
 
-    let rows, result;
+    let rows;
     if (type === "products") {
       rows = rawRows.map(r => mapImportRow(r, ["product_name", "sku", "category", "description", "selling_price", "cost_price", "quantity", "low_stock_threshold"]))
         .map(r => ({ name: r.product_name, ...r }));
-      result = await Api.importProducts(rows);
     } else if (type === "sales") {
       rows = rawRows.map(r => mapImportRow(r, ["product_name", "sku", "quantity", "unit_price", "unit_cost", "sold_at"]));
-      result = await Api.importSales(rows);
     } else {
       rows = rawRows.map(r => mapImportRow(r, ["product_name", "sku", "quantity_change", "note"]));
-      result = await Api.importStock(rows);
     }
 
-    const summary = type === "products"
-      ? `${result.created} added, ${result.updated} updated, skipped ${result.skipped}`
-      : `Imported ${result.imported}, skipped ${result.skipped}`;
-    toast(`${summary}${result.errors.length ? " (see console for details)" : ""}`);
-    if (result.errors.length) console.warn("Import issues:", result.errors);
-    fileInput.value = "";
-    document.getElementById("import-file-info").innerHTML = "";
-    render();
+    // Nothing is saved yet: show a confirm step with a cancel option.
+    bulkImportPending = { type, rows, fileName: file.name };
+    importPanel("import-review", `
+      <div class="bg-primary-light text-primary-dark text-sm rounded-xl p-3 mt-3">
+        <p class="mb-2">Ready to import ${rows.length} ${IMPORT_TYPE_LABELS[type]} row${rows.length === 1 ? "" : "s"} from ${file.name}. Nothing is saved until you confirm.</p>
+        <div class="flex gap-2">
+          <button onclick="cancelBulkImport()" class="flex-1 bg-white font-semibold py-2 rounded-lg text-sm border border-black/10">Cancel</button>
+          <button onclick="confirmBulkImport()" class="flex-1 bg-primary text-white font-semibold py-2 rounded-lg text-sm">Import ${rows.length} rows</button>
+        </div>
+      </div>`);
   } catch (err) {
     toast(err.message || "Could not read that file");
   }
+}
+
+function cancelBulkImport() {
+  bulkImportPending = null;
+  importPanel("import-review", "");
+  const input = document.getElementById("import-file");
+  if (input) input.value = "";
+  importPanel("import-file-info", "");
+  toast("Import cancelled, nothing was saved");
+}
+
+async function confirmBulkImport() {
+  if (!bulkImportPending || importRunning) return;
+  const { type, rows } = bulkImportPending;
+  const agg = await importRowsInChunks(type, rows, "import-review");
+  bulkImportPending = null;
+  toast(importSummary(type, agg) + (agg.errors.length ? " (see console for details)" : ""));
+  if (agg.errors.length) console.warn("Import issues:", agg.errors);
+  importPanel("import-review", "");
+  const input = document.getElementById("import-file");
+  if (input) input.value = "";
+  importPanel("import-file-info", "");
+  render();
 }
 
 // ---------------- SMART IMPORT (any column format) ----------------
@@ -3030,7 +3177,10 @@ function renderSmartImportReview() {
     container.innerHTML = `
       <div class="bg-primary-light text-primary-dark text-sm rounded-xl p-3 mt-3">
         <p class="mb-2">Matched all ${mappedRows.length} rows${fileTag}.</p>
-        <button onclick="finalizeSmartImport()" class="w-full bg-primary text-white font-semibold py-2 rounded-lg text-sm">Import ${mappedRows.length} rows</button>
+        <div class="flex gap-2">
+          <button onclick="cancelSmartImport()" class="flex-1 bg-white font-semibold py-2 rounded-lg text-sm border border-black/10">Cancel</button>
+          <button onclick="finalizeSmartImport()" class="flex-1 bg-primary text-white font-semibold py-2 rounded-lg text-sm">Import ${mappedRows.length} rows</button>
+        </div>
       </div>`;
     return;
   }
@@ -3068,7 +3218,10 @@ function renderSmartImportReview() {
         </tbody>
       </table>
     </div>
-    <button onclick="finalizeSmartImport()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-3">Fill in and import</button>
+    <div class="flex gap-2 mt-3">
+      <button onclick="cancelSmartImport()" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
+      <button onclick="finalizeSmartImport()" class="flex-1 bg-primary text-white font-semibold py-2.5 rounded-xl">Fill in and import</button>
+    </div>
   `;
 }
 
@@ -3079,8 +3232,20 @@ function applySmartFillAll(field) {
   renderSmartImportReview();
 }
 
+function cancelSmartImport() {
+  if (importRunning) { requestImportCancel(); return; }
+  smartImportState = null;
+  smartImportQueue = [];
+  smartImportTotalFiles = 0;
+  importPanel("smart-import-review", "");
+  const input = document.getElementById("smart-import-file");
+  if (input) input.value = "";
+  importPanel("smart-import-file-info", "");
+  toast("Import cancelled, nothing was saved");
+}
+
 async function finalizeSmartImport() {
-  if (!smartImportState) return;
+  if (!smartImportState || importRunning) return;
   const { mappedRows, type } = smartImportState;
 
   mappedRows.forEach((row, i) => {
@@ -3090,45 +3255,60 @@ async function finalizeSmartImport() {
     });
   });
 
-  try {
-    let result;
-    if (type === "products") result = await Api.importProducts(mappedRows);
-    else if (type === "sales") result = await Api.importSales(mappedRows);
-    else result = await Api.importStock(mappedRows);
+  const agg = await importRowsInChunks(type, mappedRows, "smart-import-review");
+  toast(importSummary(type, agg) + (agg.errors.length ? " (see console for details)" : ""));
+  if (agg.errors.length) console.warn("Smart import issues:", agg.errors);
 
-    const summary = type === "products"
-      ? `${result.created} added, ${result.updated} updated, skipped ${result.skipped}`
-      : `Imported ${result.imported}, skipped ${result.skipped}`;
-    toast(`${summary}${result.errors.length ? " (see console for details)" : ""}`);
-    if (result.errors.length) console.warn("Smart import issues:", result.errors);
-
-    if (smartImportQueue.length > 0) {
-      // More files were selected, move straight on to the next one
-      // instead of stopping after the first.
-      document.getElementById("smart-import-review").innerHTML = "";
-      return processNextSmartImportFile();
-    }
-
-    smartImportState = null;
+  if (agg.cancelled || agg.error) {
+    // Stop here, including any files still waiting in the queue.
+    smartImportQueue = [];
     smartImportTotalFiles = 0;
-    document.getElementById("smart-import-review").innerHTML = "";
-    document.getElementById("smart-import-file").value = "";
-    document.getElementById("smart-import-file-info").innerHTML = "";
-    render();
-  } catch (err) {
-    toast(err.message || "Import failed");
   }
+
+  if (smartImportQueue.length > 0) {
+    // More files were selected, move straight on to the next one.
+    importPanel("smart-import-review", "");
+    return processNextSmartImportFile();
+  }
+
+  smartImportState = null;
+  smartImportTotalFiles = 0;
+  importPanel("smart-import-review", "");
+  const input = document.getElementById("smart-import-file");
+  if (input) input.value = "";
+  importPanel("smart-import-file-info", "");
+  render();
 }
 
-let pendingLogoDataUrl = null;
+let pendingLogoDataUrl = null; // null = unchanged, "" = remove
+let originalLogo = "";
+const LOGO_PLACEHOLDER_SVG = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7h20"/><path d="M19 7V4a1 1 0 0 0-1-1H6a1 1 0 0 0-1 1v3"/><path d="M4 7v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7"/><path d="M8 14h8"/></svg>`;
+
+function refreshLogoControls() {
+  const current = pendingLogoDataUrl !== null ? pendingLogoDataUrl : originalLogo;
+  const has = !!current;
+  const preview = document.getElementById("logo-preview");
+  if (preview) {
+    preview.style.backgroundImage = has ? `url('${current}')` : "";
+    preview.innerHTML = has ? "" : LOGO_PLACEHOLDER_SVG;
+  }
+  const label = document.getElementById("logo-label");
+  if (label) label.firstChild.textContent = has ? "Change logo" : "Add logo";
+  const remove = document.getElementById("logo-remove");
+  if (remove) remove.classList.toggle("hidden", !has);
+}
+
+function removeLogo() {
+  pendingLogoDataUrl = "";
+  refreshLogoControls();
+}
 
 async function onLogoSelected(event) {
   const file = event.target.files[0];
   if (!file) return;
   try {
     pendingLogoDataUrl = await compressImageToDataUrl(file, 200, 200);
-    document.getElementById("logo-preview").style.backgroundImage = `url('${pendingLogoDataUrl}')`;
-    document.getElementById("logo-preview").textContent = "";
+    refreshLogoControls();
   } catch (err) {
     toast("Could not read that image, try a different file");
   }
@@ -3143,7 +3323,7 @@ async function saveSettings() {
     currency_symbol: CURRENCIES[currencyCode]?.symbol || "₦",
     default_low_stock_threshold: parseInt(document.getElementById("set-threshold").value) || 5,
   };
-  if (pendingLogoDataUrl) data.logo_url = pendingLogoDataUrl;
+  if (pendingLogoDataUrl !== null) data.logo_url = pendingLogoDataUrl;
   try {
     const updated = await Api.updateSettings(data);
     shopSettings = USE_SAMPLE_DATA ? sampleSettings : updated;
