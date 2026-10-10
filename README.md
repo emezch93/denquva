@@ -39,7 +39,9 @@ Denquva is a business management platform that helps businesses manage products,
 - Multiple files can be imported and processed individually
 
 **Accounts & Billing**
-- User signup and login
+- Public landing page for new visitors; returning users go straight to login, signed in users go straight to the dashboard
+- User signup with email and password, Cloudflare Turnstile human check, and required Terms of Service and Privacy Policy agreement (acceptance recorded server side)
+- User login with a persistent session
 - Password reset through security questions
 - Multi shop and branch support under one account
 - Each shop has its own products, sales, and settings
@@ -84,3 +86,10 @@ denquva/
 ├── js/
 │   └── app.js              Application logic and UI rendering
 └── icons/                  PWA icons
+
+## Registration setup
+
+1. Create a Turnstile widget in Cloudflare (Dashboard, Turnstile) for `denquva.pages.dev`.
+2. Put the **site key** (public) in `TURNSTILE_SITE_KEY` at the top of `js/app.js`.
+3. Store the **secret key** only in the Worker: `npx wrangler secret put TURNSTILE_SECRET_KEY`.
+4. Run `migrations/terms_acceptance.sql` and replace `signup` in `worker.js` with `worker/signup-block.js`.
