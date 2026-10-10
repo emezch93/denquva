@@ -1064,7 +1064,6 @@ function ViewLanding() {
       </nav>
 
       <section class="lp-hero">
-        <img src="icons/icon-192.png" alt="Denquva logo" width="72" height="72" class="lp-hero-logo" />
         <h1>Run your shop with confidence.</h1>
         <p>Denquva helps you manage products, stock, sales, profit and customer credit in one place, with an AI assistant that answers questions about your business.</p>
         <div class="lp-cta">
