@@ -189,3 +189,10 @@ main#app.landing-wide { max-width: 64rem; padding-top: 0; }
   .lp-steps { grid-template-columns: repeat(3, 1fr); }
   .lp-grid { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* ---------- Brand logo beside the name (login, sign up, app header) ---------- */
+.brand-row { display: flex; align-items: center; gap: 0.55rem; }
+.brand-row-center { justify-content: center; }
+.brand-logo { width: 28px; height: 28px; border-radius: 7px; flex: none; display: block; }
+.brand-logo-lg { width: 36px; height: 36px; border-radius: 9px; }
+.brand-logo-sm { width: 24px; height: 24px; border-radius: 6px; }
