@@ -158,7 +158,6 @@ main#app.landing-wide { max-width: 64rem; padding-top: 0; }
 .lp-link { font-weight: 600; font-size: 0.9rem; color: #0F6B4C; padding: 0.5rem 0.25rem; }
 .lp-brand { display: flex; align-items: center; gap: 0.55rem; }
 .lp-logo-img { width: 32px; height: 32px; border-radius: 8px; display: block; }
-.lp-hero-logo { width: 72px; height: 72px; border-radius: 18px; display: block; margin: 0 auto 1.1rem; box-shadow: 0 6px 18px rgba(11,80,56,0.18); }
 .lp-hero { text-align: center; padding: 2.5rem 0 2rem; max-width: 40rem; margin: 0 auto; }
 .lp-hero h1 { font-family: Manrope, sans-serif; font-weight: 800; font-size: 2.1rem; line-height: 1.15; color: #0B5038; }
 .lp-hero p { margin-top: 1rem; font-size: 1rem; line-height: 1.6; color: rgba(22,36,29,0.7); }
@@ -183,7 +182,6 @@ main#app.landing-wide { max-width: 64rem; padding-top: 0; }
 
 @media (min-width: 768px) {
   .lp-hero { padding: 4rem 0 3rem; }
-  .lp-hero-logo { width: 88px; height: 88px; border-radius: 22px; }
   .lp-hero h1 { font-size: 3rem; }
   .lp-hero p { font-size: 1.1rem; }
   .lp-cta { flex-direction: row; justify-content: center; }
