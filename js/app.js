@@ -2,7 +2,7 @@ const API_BASE = "https://denquva-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = false;
 // Cloudflare Turnstile PUBLIC site key (safe to expose). The secret key lives
 // only in the Worker as TURNSTILE_SECRET_KEY. Leave empty to hide the widget.
-const TURNSTILE_SITE_KEY = "";
+const TURNSTILE_SITE_KEY = "0x4AAAAAAFS-OZp-MCP-4szJ";
 // Bump when the Terms of Service or Privacy Policy text changes.
 const TERMS_VERSION = "2026-10-10";
 const CURRENCIES = {
