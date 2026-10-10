@@ -63,7 +63,9 @@ async function authFetch(url, options = {}) {
   return fetch(url, { ...options, headers });
 }
 
-function logout() {
+// Normal logout (and account deletion) goes back to the landing page like a
+// brand new visitor. A session that simply expired goes to login instead.
+function logout(opts = {}) {
   authToken = null;
   currentShop = null;
   shopSettings = null;
@@ -71,7 +73,17 @@ function logout() {
   localStorage.removeItem("denquva_token");
   localStorage.removeItem("denquva_active_shop_id");
   clearLocalCaches();
-  authMode = "login";
+  if (opts.wipe) {
+    try { Object.keys(localStorage).filter(k => k.startsWith("denquva")).forEach(k => localStorage.removeItem(k)); } catch {}
+  }
+  if (opts.expired) {
+    authMode = "login";
+  } else {
+    localStorage.removeItem("denquva_returning");
+    authMode = "landing";
+  }
+  turnstileToken = null;
+  turnstileWidgetId = null;
   forgotStep = "email";
   backgroundRefreshStarted = false;
   lastPaintedView = null;
@@ -527,6 +539,14 @@ const Api = {
     return apiJson(res);
   },
 
+  async deleteAccount(current_password) {
+    const res = await authFetch(`${API_BASE}/auth/delete-account`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_password }),
+    });
+    return apiJson(res);
+  },
+
   async changePassword(current_password, new_password) {
     const res = await authFetch(`${API_BASE}/auth/change-password`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -803,7 +823,7 @@ async function refreshSessionInBackground() {
     }
     if (wasUsable !== isSessionUsable(fresh)) needsRender = true;
   } catch (err) {
-    if (err.status === 401) { logout(); return; }
+    if (err.status === 401) { logout({ expired: true }); return; }
   }
   try {
     const freshSettings = await Api.getSettings();
@@ -864,7 +884,7 @@ async function render() {
         } catch (err) {
           if (stale()) return;
           if (err.status === 401) {
-            logout();
+            logout({ expired: true });
           } else {
             hideNav();
             app.innerHTML = `
@@ -888,7 +908,7 @@ async function render() {
         writeCache(CACHE_KEYS.shop, fresh);
       } catch (err) {
         if (stale()) return;
-        if (err.status === 401) { logout(); return; }
+        if (err.status === 401) { logout({ expired: true }); return; }
       }
     }
     if (!isSessionUsable(currentShop)) {
@@ -1104,7 +1124,7 @@ async function ViewAuth() {
   return `
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
       <div class="text-center mb-6">
-        <h1 class="font-display text-3xl font-extrabold text-primary-dark">Denquva</h1>
+        <h1 class="brand-row brand-row-center font-display text-3xl font-extrabold text-primary-dark"><img src="icons/icon-192.png" alt="" width="36" height="36" class="brand-logo brand-logo-lg" /><span>Denquva</span></h1>
         <p class="text-sm text-ink/50 mt-1">Simple stock and sales, in your pocket.</p>
       </div>
       <div class="flex bg-black/5 rounded-full p-1 mb-5">
@@ -1300,6 +1320,7 @@ async function ViewPaymentPending() {
       <button onclick="resumePaymentFlow()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mb-3">Continue to payment</button>
       <button onclick="refreshSession()" class="w-full border border-black/10 py-2.5 rounded-xl font-semibold mb-3">I already paid, refresh</button>
       <button onclick="logout()" class="text-xs text-ink/40 underline">Log out</button>
+      <button onclick="openDeleteAccount()" class="block mx-auto mt-4 text-xs text-danger underline">Delete account</button>
     </div>
   `;
 }
@@ -1949,7 +1970,7 @@ function closeModal(id) {
 const FOOTER_INFO = {
   about: {
     title: "About Denquva",
-    body: `Denquva is a complete business management platform for tracking inventory, sales, profit and customer credit in real time.
+    body: `Denquva is a complete shop management platform for tracking inventory, sales, and profit in real time.
       Add products with photos and pricing, record sales with one tap, and every transaction is logged with a
       full audit trail. A built-in AI assistant answers business questions and reads uploaded receipts and
       invoices to help explain your data. One account supports multiple shops or branches, each fully
@@ -2880,6 +2901,11 @@ async function ViewSettings() {
       <button onclick="submitUpdateSecurityQuestion()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update Security Question</button>
     </div>
     <button onclick="logout()" class="w-full text-danger font-semibold py-2.5 rounded-xl border border-danger/20 mt-4">Log out</button>
+    <div class="card p-4 mt-8" style="border-color:rgba(193,68,60,0.35)">
+      <h2 class="font-display font-bold text-danger">Delete account</h2>
+      <p class="text-sm text-ink/60 mt-1 mb-3">Permanently delete your account and all of its data. This cannot be undone.</p>
+      <button onclick="openDeleteAccount()" class="w-full text-white font-semibold py-2.5 rounded-xl" style="background:#C1443C">Delete account</button>
+    </div>
     ` : ""}
   `;
 }
@@ -2901,6 +2927,48 @@ async function submitChangePassword() {
     document.getElementById("cp-confirm").value = "";
   } catch (err) {
     toast(err.message);
+  }
+}
+
+// ---------------- DELETE ACCOUNT ----------------
+
+function openDeleteAccount() {
+  document.getElementById("info-modal-body").innerHTML = `
+    <h2 class="font-display text-xl font-extrabold mb-3 text-danger">Delete your account?</h2>
+    <div class="rounded-2xl p-3 text-sm leading-relaxed mb-4" style="background:#F8E2DF;color:#7A2620">
+      <p class="font-semibold mb-1">This is permanent and cannot be undone.</p>
+      <p>Everything in your account is deleted: all shops and branches, products, stock history, sales, credit sales, uploaded document summaries, and settings. Any active subscription is cancelled so you will not be billed again. To use Denquva again you will need to create a new account.</p>
+    </div>
+    <div class="space-y-3">
+      ${passwordFieldHtml("del-password", "Enter your password", `autocomplete="current-password"`)}
+      <input id="del-confirm" placeholder="Type DELETE to confirm" autocomplete="off" autocapitalize="characters" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+    </div>
+    <button id="del-submit-btn" onclick="submitDeleteAccount()" class="w-full text-white font-semibold py-2.5 rounded-xl mt-4" style="background:#C1443C">Delete my account forever</button>
+    <button onclick="closeModal('info-modal')" class="w-full border border-black/10 font-semibold py-2.5 rounded-xl mt-2">Cancel</button>
+  `;
+  document.getElementById("info-modal").classList.remove("hidden");
+}
+
+async function submitDeleteAccount() {
+  const password = document.getElementById("del-password").value;
+  const typed = document.getElementById("del-confirm").value.trim().toUpperCase();
+  if (!password) { toast("Enter your password to continue"); return; }
+  if (typed !== "DELETE") { toast("Type DELETE to confirm"); return; }
+
+  const btn = document.getElementById("del-submit-btn");
+  btn.disabled = true;
+  btn.classList.add("opacity-60");
+  btn.textContent = "Deleting…";
+  try {
+    await Api.deleteAccount(password);
+    closeModal("info-modal");
+    logout({ wipe: true });
+    toast("Your account has been deleted.");
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
+    btn.classList.remove("opacity-60");
+    btn.textContent = "Delete my account forever";
   }
 }
 
