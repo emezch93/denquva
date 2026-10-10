@@ -1,5 +1,10 @@
 const API_BASE = "https://denquva-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = false;
+// Cloudflare Turnstile PUBLIC site key (safe to expose). The secret key lives
+// only in the Worker as TURNSTILE_SECRET_KEY. Leave empty to hide the widget.
+const TURNSTILE_SITE_KEY = "";
+// Bump when the Terms of Service or Privacy Policy text changes.
+const TERMS_VERSION = "2026-10-10";
 const CURRENCIES = {
   NGN: { symbol: "₦", locale: "en-NG", name: "Nigerian Naira" },
   USD: { symbol: "$", locale: "en-US", name: "US Dollar" },
@@ -491,10 +496,10 @@ const Api = {
     return apiJson(res);
   },
 
-  async signup({ shop_name, email, password, security_question, security_answer }) {
+  async signup({ shop_name, email, password, security_question, security_answer, turnstile_token, terms_accepted, terms_version }) {
     const res = await fetch(`${API_BASE}/auth/signup`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shop_name, email, password, security_question, security_answer }),
+      body: JSON.stringify({ shop_name, email, password, security_question, security_answer, turnstile_token, terms_accepted, terms_version }),
     });
     return apiJson(res);
   },
@@ -823,11 +828,17 @@ async function render() {
       const html = await ViewAuth();
       if (stale()) return;
       app.classList.remove("is-stale");
+      document.body.classList.add("auth-screen");
+      app.classList.toggle("landing-wide", authMode === "landing");
       app.innerHTML = html;
+      window.scrollTo(0, 0);
       lastPaintedView = null;
       revealFooter();
+      if (authMode === "signup") mountTurnstile();
       return;
     }
+    document.body.classList.remove("auth-screen");
+    app.classList.remove("landing-wide");
 
     // Paint from the last known session immediately, verify in the background.
     let shopFromCache = false;
@@ -964,39 +975,164 @@ async function render() {
 
 // ---------------- AUTH & BILLING VIEWS ----------------
 
-let authMode = "login"; // or "signup"
+// "landing" for first time visitors, then "login" / "signup" / "forgot".
+// Anyone who has already used Denquva on this device goes straight to login.
+let authMode = localStorage.getItem("denquva_returning") ? "login" : "landing";
+
+function goAuth(mode) {
+  authMode = mode;
+  if (mode === "login" || mode === "signup") localStorage.setItem("denquva_returning", "1");
+  render();
+}
+
+function openLegal(event, key) {
+  event.preventDefault();
+  showFooterInfo(key);
+}
+
+// ---- Cloudflare Turnstile (human check on registration) ----
+let turnstileToken = null;
+let turnstileWidgetId = null;
+let turnstileScript = null;
+
+function loadTurnstile() {
+  if (window.turnstile) return Promise.resolve();
+  if (turnstileScript) return turnstileScript;
+  turnstileScript = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    s.async = true;
+    s.onload = resolve;
+    s.onerror = () => { turnstileScript = null; reject(new Error("Turnstile failed to load")); };
+    document.head.appendChild(s);
+  });
+  return turnstileScript;
+}
+
+async function mountTurnstile() {
+  turnstileToken = null;
+  turnstileWidgetId = null;
+  const box = document.getElementById("turnstile-box");
+  if (!box || !TURNSTILE_SITE_KEY) return;
+  try {
+    await loadTurnstile();
+    if (!box.isConnected) return; // user left the sign up form while it loaded
+    turnstileWidgetId = window.turnstile.render(box, {
+      sitekey: TURNSTILE_SITE_KEY,
+      callback: (t) => { turnstileToken = t; },
+      "expired-callback": () => { turnstileToken = null; },
+      "error-callback": () => { turnstileToken = null; },
+    });
+  } catch {
+    box.innerHTML = `<p class="text-xs text-danger">Human verification could not load. Check your connection and <a href="#" class="underline" onclick="event.preventDefault(); mountTurnstile()">try again</a>.</p>`;
+  }
+}
+
+function resetTurnstile() {
+  turnstileToken = null;
+  try { if (turnstileWidgetId !== null && window.turnstile) window.turnstile.reset(turnstileWidgetId); } catch {}
+}
+
+const LANDING_ICONS = {
+  box: '<path d="M21 8 12 3 3 8v8l9 5 9-5V8Z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+  cart: '<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.5 12h11L21 7H6"/>',
+  card: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 10h20M6 15h4"/>',
+  spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/>',
+  upload: '<path d="M12 16V4m0 0L7 9m5-5 5 5M4 20h16"/>',
+  shops: '<path d="M3 9l1.5-5h15L21 9M3 9v11h18V9M3 9h18M9 20v-6h6v6"/>',
+};
+function landingIcon(name) {
+  return `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${LANDING_ICONS[name]}</svg>`;
+}
+
+function ViewLanding() {
+  const features = [
+    ["box", "Inventory", "Products, stock levels, prices and a full record of every stock change."],
+    ["cart", "Fast sales", "Sell several items in one cart and see revenue and profit as you go."],
+    ["card", "Credit sales", "Track who owes you, mark payments as paid, and keep your totals right."],
+    ["spark", "AI assistant", "Ask questions about your business, or snap a receipt and let it read it."],
+    ["upload", "Easy import", "Bring your products, sales and stock in from CSV or Excel files."],
+    ["shops", "Multiple shops", "Run several shops or branches from one account."],
+  ].map(([icon, title, text]) => `
+    <div class="lp-card"><div class="lp-icon">${landingIcon(icon)}</div><h3>${title}</h3><p>${text}</p></div>`).join("");
+
+  return `
+    <div class="lp">
+      <nav class="lp-nav">
+        <span class="lp-logo">Denquva</span>
+        <button onclick="goAuth('login')" class="lp-link">Log in</button>
+      </nav>
+
+      <section class="lp-hero">
+        <h1>Run your shop with confidence.</h1>
+        <p>Denquva helps you manage products, stock, sales, profit and customer credit in one place, with an AI assistant that answers questions about your business.</p>
+        <div class="lp-cta">
+          <button onclick="goAuth('signup')" class="lp-btn lp-btn-primary">Create account</button>
+          <button onclick="goAuth('login')" class="lp-btn lp-btn-ghost">Log in</button>
+        </div>
+        <small>Free for 7 days. No card needed to start.</small>
+      </section>
+
+      <section class="lp-section">
+        <h2>How it works</h2>
+        <div class="lp-steps">
+          <div class="lp-step"><span>1</span><h3>Create your account</h3><p>Sign up with your email and add your shop. It takes about a minute.</p></div>
+          <div class="lp-step"><span>2</span><h3>Add your stock</h3><p>Enter products one by one, or import them from a spreadsheet.</p></div>
+          <div class="lp-step"><span>3</span><h3>Sell and track</h3><p>Record sales and credit, then watch revenue and profit update live.</p></div>
+        </div>
+      </section>
+
+      <section class="lp-section">
+        <h2>Main features</h2>
+        <div class="lp-grid">${features}</div>
+      </section>
+
+      <section class="lp-final">
+        <h2>Ready to know your numbers?</h2>
+        <div class="lp-cta">
+          <button onclick="goAuth('signup')" class="lp-btn lp-btn-light">Create account</button>
+          <button onclick="goAuth('login')" class="lp-btn lp-btn-outline">Log in</button>
+        </div>
+      </section>
+    </div>`;
+}
 
 async function ViewAuth() {
   if (authMode === "forgot") return ViewForgotPassword();
+  if (authMode === "landing") return ViewLanding();
+  const signup = authMode === "signup";
   return `
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
       <div class="text-center mb-6">
         <h1 class="font-display text-3xl font-extrabold text-primary-dark">Denquva</h1>
         <p class="text-sm text-ink/50 mt-1">Simple stock and sales, in your pocket.</p>
-        <p class="text-sm text-ink/70 mt-3 max-w-xs mx-auto">
-          Track products, sales, and profit in real time, with an AI assistant that reads your receipts and answers questions about your business.
-        </p>
       </div>
       <div class="flex bg-black/5 rounded-full p-1 mb-5">
-        <button onclick="authMode='login'; render()" class="flex-1 py-2 rounded-full text-sm font-semibold ${authMode === "login" ? "bg-white shadow-sm" : "text-ink/50"}">Log in</button>
-        <button onclick="authMode='signup'; render()" class="flex-1 py-2 rounded-full text-sm font-semibold ${authMode === "signup" ? "bg-white shadow-sm" : "text-ink/50"}">Sign up</button>
+        <button onclick="goAuth('login')" class="flex-1 py-2 rounded-full text-sm font-semibold ${!signup ? "bg-white shadow-sm" : "text-ink/50"}">Log in</button>
+        <button onclick="goAuth('signup')" class="flex-1 py-2 rounded-full text-sm font-semibold ${signup ? "bg-white shadow-sm" : "text-ink/50"}">Sign up</button>
       </div>
       <div class="card p-4 space-y-3">
-        ${authMode === "signup" ? `<input id="auth-shopname" placeholder="Shop name" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />` : ""}
-        <input id="auth-email" type="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
-        ${passwordFieldHtml("auth-password", "Password", `onkeydown="if(event.key==='Enter') submitAuth()"`)}
-        ${authMode === "signup" ? `
+        ${signup ? `<input id="auth-shopname" placeholder="Shop name" autocomplete="organization" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />` : ""}
+        <input id="auth-email" type="email" inputmode="email" autocomplete="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+        ${passwordFieldHtml("auth-password", signup ? "Choose a password (6+ characters)" : "Password", `autocomplete="${signup ? "new-password" : "current-password"}" onkeydown="if(event.key==='Enter') submitAuth()"`)}
+        ${signup ? `
           <input id="auth-security-question" placeholder="A security question only you'd know the answer to" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
           <input id="auth-security-answer" placeholder="Your answer" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+          <label class="flex items-start gap-2 text-xs text-ink/70 cursor-pointer">
+            <input id="auth-terms" type="checkbox" style="width:18px;height:18px;flex:none;margin-top:1px;accent-color:#0F6B4C" />
+            <span>I agree to the
+              <a href="#" onclick="openLegal(event,'terms')" class="text-primary underline">Terms of Service</a> and
+              <a href="#" onclick="openLegal(event,'privacy')" class="text-primary underline">Privacy Policy</a>.</span>
+          </label>
+          <div id="turnstile-box" style="min-height:0"></div>
         ` : ""}
         <button id="auth-submit-btn" onclick="submitAuth()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">
-          ${authMode === "signup" ? "Create account" : "Log in"}
+          ${signup ? "Create account" : "Log in"}
         </button>
-        ${authMode === "login" ? `<button onclick="authMode='forgot'; render()" class="w-full text-xs text-primary underline text-center">Forgot your password?</button>` : ""}
+        ${!signup ? `<button onclick="goAuth('forgot')" class="w-full text-xs text-primary underline text-center">Forgot your password?</button>` : ""}
       </div>
-      <p class="text-xs text-ink/40 text-center mt-4">
-        ${authMode === "signup" ? "Free for 7 days, no card needed to start." : ""}
-      </p>
+      <p class="text-xs text-ink/40 text-center mt-4">${signup ? "Free for 7 days, no card needed to start." : ""}</p>
+      <button onclick="goAuth('landing')" class="block mx-auto mt-2 text-xs text-ink/50 underline">What is Denquva?</button>
     </div>
   `;
 }
@@ -1024,7 +1160,7 @@ function ViewForgotPassword() {
           ${passwordFieldHtml("forgot-confirm-password", "Confirm new password")}
           <button id="forgot-submit-btn" onclick="submitForgotAnswer()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update password</button>
         `}
-        <button onclick="authMode='login'; forgotStep='email'; render()" class="w-full text-xs text-ink/50 underline text-center">Back to log in</button>
+        <button onclick="forgotStep='email'; goAuth('login')" class="w-full text-xs text-ink/50 underline text-center">Back to log in</button>
       </div>
     </div>
   `;
@@ -1077,10 +1213,27 @@ async function submitForgotAnswer() {
   }
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
 async function submitAuth() {
   const email = document.getElementById("auth-email").value.trim();
   const password = document.getElementById("auth-password").value;
   if (!email || !password) { toast("Email and password are required"); return; }
+  if (!EMAIL_RE.test(email)) { toast("Enter a valid email address"); return; }
+
+  // Validate every sign up field before the button locks.
+  let signupData = null;
+  if (authMode === "signup") {
+    const shop_name = document.getElementById("auth-shopname").value.trim();
+    const security_question = document.getElementById("auth-security-question").value.trim();
+    const security_answer = document.getElementById("auth-security-answer").value.trim();
+    if (!shop_name) { toast("Shop name is required"); return; }
+    if (password.length < 6) { toast("Password must be at least 6 characters"); return; }
+    if (!security_question || !security_answer) { toast("A security question and answer are required, they're how you recover your password"); return; }
+    if (!document.getElementById("auth-terms").checked) { toast("Please agree to the Terms of Service and Privacy Policy"); return; }
+    if (TURNSTILE_SITE_KEY && !turnstileToken) { toast("Please complete the human verification"); return; }
+    signupData = { shop_name, email, password, security_question, security_answer };
+  }
 
   const btn = document.getElementById("auth-submit-btn");
   const originalLabel = btn.textContent;
@@ -1095,14 +1248,15 @@ async function submitAuth() {
 
   try {
     if (authMode === "signup") {
-      const shop_name = document.getElementById("auth-shopname").value.trim();
-      const security_question = document.getElementById("auth-security-question").value.trim();
-      const security_answer = document.getElementById("auth-security-answer").value.trim();
-      if (!shop_name) { toast("Shop name is required"); restoreBtn(); return; }
-      if (!security_question || !security_answer) { toast("A security question and answer are required, they're how you recover your password"); restoreBtn(); return; }
-      const result = await Api.signup({ shop_name, email, password, security_question, security_answer });
+      const result = await Api.signup({
+        ...signupData,
+        turnstile_token: turnstileToken,
+        terms_accepted: true,
+        terms_version: TERMS_VERSION,
+      });
       authToken = result.token;
       localStorage.setItem("denquva_token", authToken);
+      localStorage.setItem("denquva_returning", "1");
       if (result.authorization_url) {
         window.location.href = result.authorization_url;
         return;
@@ -1114,11 +1268,13 @@ async function submitAuth() {
       const result = await Api.login({ email, password });
       authToken = result.token;
       localStorage.setItem("denquva_token", authToken);
+      localStorage.setItem("denquva_returning", "1");
       currentShop = null;
       render();
     }
   } catch (err) {
     toast(err.message);
+    if (authMode === "signup") resetTurnstile(); // tokens are single use
     restoreBtn();
   }
 }
@@ -1810,7 +1966,8 @@ const FOOTER_INFO = {
     body: `Denquva stores the business data you enter, products, sales, stock movements, and settings, to provide
       the service. Payment is processed by Paystack, Denquva does not store your card details. Questions you ask
       the AI assistant, and any documents you upload, are sent to Google's Gemini API to generate a response;
-      document uploads are summarized and the summary is kept, the original file is not stored. Your data is
+      document uploads are summarized and the summary is kept, the original file is not stored. New sign ups are checked with Cloudflare Turnstile to block bots, and the date you accepted
+      the Terms and Privacy Policy is recorded with your account. Your data is
       never sold. Data for each shop is kept separate and is never visible to other shops on the platform.
       Contact <a href="mailto:denquva@gmail.com" class="text-primary-dark underline">denquva@gmail.com</a>
       with any privacy questions.`,
