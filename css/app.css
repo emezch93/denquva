@@ -20,9 +20,11 @@
   gap: 0.15rem;
   font-size: 0.68rem;
   color: #8B948E;
-  padding: 0.35rem 0.5rem;
+  padding: 0.35rem 0.1rem;
   cursor: pointer;
-  min-width: 60px;
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
 }
 .bottom-nav-item.active { color: #0F6B4C; font-weight: 600; }
 
@@ -196,3 +198,7 @@ main#app.landing-wide { max-width: 64rem; padding-top: 0; }
 .brand-logo { width: 28px; height: 28px; border-radius: 7px; flex: none; display: block; }
 .brand-logo-lg { width: 36px; height: 36px; border-radius: 9px; }
 .brand-logo-sm { width: 24px; height: 24px; border-radius: 6px; }
+
+/* ---------- Debts page ---------- */
+.pill-overdue { background: rgba(193, 68, 60, 0.12); color: #C1443C; }
+.break-words { overflow-wrap: anywhere; }
