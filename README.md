@@ -35,8 +35,14 @@ Denquva is a business management platform that helps businesses manage products,
 - Payments are recorded in sales and revenue totals on the date they are actually paid
 - Search, filter, sort, and view complete credit sale details
 
+**Debts**
+- Record people and suppliers the business owes, with the amount, a note, the date owed, and an optional due date
+- Record part or full payments, each kept in a payment history, with the balance updated automatically
+- Total owed, overdue amount, search, filters (All, Owing, Settled), and sorting
+- Kept separate from sales, stock, revenue, and profit, and removed with the account when it is deleted
+
 **AI Business Assistant**
-- Read only: answers questions about dashboard data, sales, top products, and credit sales
+- Read only: answers questions about dashboard data, sales, top products, credit sales, and debts
 - Does not modify inventory, prices, sales, or other business data
 - Reads uploaded receipts and invoices from photos or files
 - Remembers uploaded receipt information for future questions
@@ -84,7 +90,8 @@ denquva/
 │   └── app.js              Application logic, auth screens, and UI rendering
 ├── icons/                  PWA icons
 ├── migrations/
-│   └── terms_acceptance.sql   Adds terms acceptance columns to the shops table
+│   ├── terms_acceptance.sql   Adds terms acceptance columns to the shops table
+│   └── debts.sql              Creates the debts and debt_payments tables
 └── worker/
     └── signup-block.js     Signup function with Turnstile and terms checks (for worker.js)
 ```
@@ -116,6 +123,7 @@ Everything can be done in the Cloudflare dashboard.
 **3. Database**
 - D1, your database, Console, run the two statements in `migrations/terms_acceptance.sql` one at a time
 - Existing accounts keep empty values in the new columns
+- For the Debts page, also run each statement in `migrations/debts.sql` one at a time. Run them before deploying the Worker.
 
 **4. Worker code**
 - In the Worker's Edit code view, replace the old `signup` function with the contents of `worker/signup-block.js`, then Deploy
