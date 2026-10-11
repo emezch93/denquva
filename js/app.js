@@ -162,6 +162,10 @@ function warmLibsWhenIdle() {
   else setTimeout(go, 4000);
 }
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 function formatMoney(n) {
   const code = shopSettings?.currency_code || "NGN";
   const currency = CURRENCIES[code] || CURRENCIES.NGN;
@@ -442,6 +446,31 @@ const Api = {
     return apiJson(res);
   },
 
+  // ---- Debts (what the business owes) ----
+  async getDebts() {
+    const res = await authFetch(`${API_BASE}/api/debts`);
+    return apiJson(res);
+  },
+
+  async createDebt(data) {
+    const res = await authFetch(`${API_BASE}/api/debts`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+    });
+    return apiJson(res);
+  },
+
+  async addDebtPayment(id, data) {
+    const res = await authFetch(`${API_BASE}/api/debts/${id}/payments`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+    });
+    return apiJson(res);
+  },
+
+  async deleteDebt(id) {
+    const res = await authFetch(`${API_BASE}/api/debts/${id}`, { method: "DELETE" });
+    return apiJson(res);
+  },
+
   async getDashboard() {
     if (USE_SAMPLE_DATA) {
       const today = new Date().toDateString();
@@ -683,6 +712,7 @@ const NAV_ICON_SVG = {
   products: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>`,
   sales: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M8 7h8"/><path d="M8 11h8"/><path d="M8 15h5"/></svg>`,
   credit: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+  debts: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v3"/><path d="M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3"/><path d="M21 10h-5a2 2 0 0 0 0 4h5z"/></svg>`,
   ai: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>`,
   settings: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
 };
@@ -691,8 +721,9 @@ const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: NAV_ICON_SVG.dashboard, hint: "Today's sales, revenue, and low stock at a glance" },
   { id: "products", label: "Products", icon: NAV_ICON_SVG.products, hint: "Add, edit, sell, and restock your products" },
   { id: "sales", label: "Sales", icon: NAV_ICON_SVG.sales, hint: "Your sales history and estimated profit" },
-  { id: "credit", label: "Credit Sales", icon: NAV_ICON_SVG.credit, hint: "Products given on credit, and who still owes you" },
-  { id: "ai", label: "AI Assistant", icon: NAV_ICON_SVG.ai, hint: "Ask questions about your business, by typing or speaking" },
+  { id: "credit", label: "Credit Sales", icon: NAV_ICON_SVG.credit, hint: "Products given on credit, and who still owes you", short: "Credit" },
+  { id: "debts", label: "Debts", icon: NAV_ICON_SVG.debts, hint: "People and suppliers you owe, with payments recorded" },
+  { id: "ai", label: "AI Assistant", icon: NAV_ICON_SVG.ai, hint: "Ask questions about your business, by typing or speaking", short: "AI" },
   { id: "settings", label: "Settings", icon: NAV_ICON_SVG.settings, hint: "Shop name, logo, currency, password, and subscription" },
 ];
 
@@ -742,7 +773,7 @@ function renderNav() {
     </div>`).join("");
   bottom.innerHTML = NAV_ITEMS.map(item => `
     <div class="bottom-nav-item ${currentView === item.id ? "active" : ""}" onclick="setView('${item.id}')" title="${item.hint}">
-      <span>${item.icon}</span><span>${item.label}</span>
+      <span>${item.icon}</span><span>${item.short || item.label}</span>
     </div>`).join("");
   document.getElementById("mobile-title").textContent = NAV_ITEMS.find(i => i.id === currentView).label;
 }
@@ -959,6 +990,7 @@ async function render() {
     if (view === "products") html = await ViewProducts();
     if (view === "sales") html = await ViewSales();
     if (view === "credit") html = await ViewCredit();
+    if (view === "debts") html = await ViewDebts();
     if (view === "ai") html = await ViewAI();
     if (view === "settings") html = await ViewSettings();
     if (stale()) return;
@@ -1069,7 +1101,7 @@ function ViewLanding() {
   const features = [
     ["box", "Inventory", "Products, stock levels, prices and a full record of every stock change."],
     ["cart", "Fast sales", "Sell several items in one cart and see revenue and profit as you go."],
-    ["card", "Credit sales", "Track who owes you, mark payments as paid, and keep your totals right."],
+    ["card", "Credit and debts", "Track who owes you, and keep a record of who you owe and what you have paid."],
     ["spark", "AI assistant", "Ask questions about your business, or snap a receipt and let it read it."],
     ["upload", "Easy import", "Bring your products, sales and stock in from CSV or Excel files."],
     ["shops", "Multiple shops", "Run several shops or branches from one account."],
@@ -2547,6 +2579,271 @@ async function deleteDocumentFlow(id) {
     render();
   } catch (err) {
     toast(err.message);
+  }
+}
+
+// ---------------- DEBTS VIEW (people the business owes) ----------------
+// A simple ledger of what the business owes suppliers and others. Each
+// debt keeps its own payment history, so part payments are recorded
+// and the balance always adds up. It does not touch stock, sales,
+// revenue or profit.
+let debtSearchTerm = "";
+let debtStatusFilter = ""; // "", "pending", "paid"
+let debtSortKey = "date";
+let debtSortDir = "desc";
+let lastRenderedDebts = [];
+
+function localDateStr(d = new Date()) {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+function formatDay(str) {
+  if (!str) return "";
+  const d = new Date(String(str).slice(0, 10) + "T12:00:00");
+  return isNaN(d.getTime()) ? "" : d.toLocaleDateString();
+}
+function isDebtOverdue(d) {
+  return d.status === "pending" && !!d.due_date && String(d.due_date).slice(0, 10) < localDateStr();
+}
+
+async function ViewDebts() {
+  const all = await Api.getDebts();
+  lastRenderedDebts = all;
+
+  const open = all.filter(d => d.status === "pending");
+  const totalOwed = open.reduce((a, d) => a + d.balance, 0);
+  const overdue = open.filter(isDebtOverdue);
+  const overdueTotal = overdue.reduce((a, d) => a + d.balance, 0);
+
+  const term = debtSearchTerm.trim().toLowerCase();
+  let rowsData = all.filter(d => {
+    if (debtStatusFilter && d.status !== debtStatusFilter) return false;
+    if (!term) return true;
+    return d.creditor_name.toLowerCase().includes(term) || (d.note || "").toLowerCase().includes(term);
+  });
+  const keyFn = {
+    date: d => d.debt_date || "",
+    name: d => d.creditor_name.toLowerCase(),
+    due: d => d.due_date || "9999-99-99",
+    balance: d => d.balance,
+  }[debtSortKey] || (d => d.debt_date || "");
+  rowsData = [...rowsData].sort((a, b) => {
+    const x = keyFn(a), y = keyFn(b);
+    const cmp = x > y ? 1 : x < y ? -1 : 0;
+    return debtSortDir === "asc" ? cmp : -cmp;
+  });
+
+  const statusTabs = [["", "All"], ["pending", "Owing"], ["paid", "Settled"]].map(([key, label]) => `
+    <button onclick="debtStatusFilter='${key}'; render()" class="px-3 py-1.5 rounded-full text-sm font-medium ${debtStatusFilter === key ? "bg-primary text-white" : "bg-surface border border-black/10"}">${label}</button>
+  `).join("");
+  const sortOptions = [["date", "Date"], ["name", "Name"], ["due", "Due date"], ["balance", "Balance"]]
+    .map(([key, label]) => `<option value="${key}" ${debtSortKey === key ? "selected" : ""}>${label}</option>`).join("");
+
+  const rows = rowsData.length ? rowsData.map(d => {
+    const late = isDebtOverdue(d);
+    const pill = d.status === "paid"
+      ? `<span class="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 bg-primary-light text-primary-dark">Settled</span>`
+      : late
+        ? `<span class="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 pill-overdue">Overdue</span>`
+        : `<span class="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 bg-amber-light text-amber-dark">Owing</span>`;
+    return `
+    <div onclick="openDebtDetail(${d.id})" class="flex items-start gap-3 py-3 border-b border-black/5 last:border-0 cursor-pointer active:bg-black/5 rounded-lg px-1 -mx-1">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2">
+          <div class="font-medium truncate">${escapeHtml(d.creditor_name)}</div>
+          ${pill}
+        </div>
+        ${d.note ? `<div class="text-xs text-ink/45 truncate">${escapeHtml(d.note)}</div>` : ""}
+        <div class="text-xs text-ink/45">Owed since ${formatDay(d.debt_date)}${d.due_date ? ` · Due ${formatDay(d.due_date)}` : ""}</div>
+      </div>
+      <div class="text-right flex-shrink-0">
+        ${d.status === "pending"
+          ? `<div class="font-semibold text-danger">${formatMoney(d.balance)}</div>${d.amount_paid > 0 ? `<div class="text-xs text-ink/45">of ${formatMoney(d.total_amount)}</div>` : `<div class="text-xs text-ink/45">owed</div>`}`
+          : `<div class="font-semibold">${formatMoney(d.total_amount)}</div><div class="text-xs text-primary">Paid in full</div>`}
+      </div>
+    </div>`;
+  }).join("") : `<div class="text-center py-12 text-ink/40">${all.length ? "No debts match your search or filter." : "No debts recorded yet. Tap + Add Debt when you owe someone."}</div>`;
+
+  return `
+    <div class="flex items-center justify-between mb-4 gap-2">
+      <h1 class="font-display text-2xl font-extrabold hidden md:block">Debts</h1>
+      <button onclick="openDebtForm()" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full text-sm whitespace-nowrap">+ Add Debt</button>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3 mb-4">
+      <div class="stat-card">
+        <div class="text-xs text-ink/50">Total you owe</div>
+        <div class="font-display text-xl font-extrabold text-danger">${formatMoney(totalOwed)}</div>
+        <div class="text-xs text-ink/40">${open.length} ${open.length === 1 ? "person" : "people"}</div>
+      </div>
+      <div class="stat-card">
+        <div class="text-xs text-ink/50">Overdue</div>
+        <div class="font-display text-xl font-extrabold ${overdue.length ? "text-danger" : ""}">${formatMoney(overdueTotal)}</div>
+        <div class="text-xs text-ink/40">${overdue.length} past due date</div>
+      </div>
+    </div>
+
+    <input type="text" placeholder="Search by name or note" value="${escapeHtml(debtSearchTerm)}"
+      oninput="debtSearchTerm = this.value; render()"
+      class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-3" />
+
+    <div class="flex items-center justify-between gap-2 mb-3 flex-wrap">
+      <div class="flex gap-2">${statusTabs}</div>
+      <div class="flex items-center gap-1">
+        <select onchange="debtSortKey=this.value; render()" class="border border-black/10 rounded-lg px-2 py-1.5 text-sm">${sortOptions}</select>
+        <button onclick="debtSortDir = debtSortDir === 'asc' ? 'desc' : 'asc'; render()" class="border border-black/10 rounded-lg px-2 py-1.5 text-sm" title="Toggle sort direction">${debtSortDir === "asc" ? "↑" : "↓"}</button>
+      </div>
+    </div>
+
+    <div class="card p-4">${rows}</div>
+  `;
+}
+
+// ---- Add debt ----
+function openDebtForm() {
+  document.getElementById("debt-modal-body").innerHTML = `
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-display text-xl font-extrabold">Add debt</h2>
+      <button onclick="closeModal('debt-modal')" class="text-ink/40 text-xl leading-none">✕</button>
+    </div>
+    <div class="space-y-3">
+      <div>
+        <label class="text-xs font-semibold text-ink/50">Who do you owe?</label>
+        <input id="debt-name" maxlength="120" placeholder="Name of person or supplier" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/50">Amount owed</label>
+        <input id="debt-amount" type="number" inputmode="decimal" min="0" step="any" placeholder="0" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-ink/50">What is it for? (optional)</label>
+        <input id="debt-note" maxlength="500" placeholder="e.g. 20 cartons of noodles" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs font-semibold text-ink/50">Date owed</label>
+          <input id="debt-date" type="date" value="${localDateStr()}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-ink/50">Due date (optional)</label>
+          <input id="debt-due" type="date" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+        </div>
+      </div>
+    </div>
+    <div class="flex gap-2 mt-5">
+      <button onclick="closeModal('debt-modal')" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
+      <button id="debt-save-btn" onclick="submitDebt()" class="flex-1 py-2.5 rounded-xl bg-primary text-white font-semibold">Save debt</button>
+    </div>
+  `;
+  document.getElementById("debt-modal").classList.remove("hidden");
+}
+
+async function submitDebt() {
+  const creditor_name = document.getElementById("debt-name").value.trim();
+  const amount = Number(document.getElementById("debt-amount").value);
+  const note = document.getElementById("debt-note").value.trim();
+  const debt_date = document.getElementById("debt-date").value || localDateStr();
+  const due_date = document.getElementById("debt-due").value || null;
+
+  if (!creditor_name) { toast("Enter who you owe"); return; }
+  if (!isFinite(amount) || amount <= 0) { toast("Enter an amount greater than zero"); return; }
+  if (due_date && due_date < debt_date) { toast("The due date cannot be before the date owed"); return; }
+
+  const btn = document.getElementById("debt-save-btn");
+  btn.disabled = true; btn.classList.add("opacity-60"); btn.textContent = "Saving…";
+  try {
+    await Api.createDebt({ creditor_name, amount, note, debt_date, due_date });
+    closeModal("debt-modal");
+    toast("Debt recorded");
+    render();
+  } catch (err) {
+    toast(err.message || "Could not save that debt");
+    btn.disabled = false; btn.classList.remove("opacity-60"); btn.textContent = "Save debt";
+  }
+}
+
+// ---- Debt detail, payments and delete ----
+function openDebtDetail(id) {
+  const d = lastRenderedDebts.find(x => x.id === id);
+  if (!d) return;
+  const late = isDebtOverdue(d);
+  const pill = d.status === "paid"
+    ? `<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded-full mb-4 bg-primary-light text-primary-dark">Settled</span>`
+    : late
+      ? `<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded-full mb-4 pill-overdue">Overdue</span>`
+      : `<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded-full mb-4 bg-amber-light text-amber-dark">Owing</span>`;
+
+  const payments = (d.payments || []).map(p => `
+    <div class="flex justify-between py-1.5 border-b border-black/5 last:border-0 text-sm">
+      <span>${new Date(p.paid_at).toLocaleDateString()}${p.note ? ` <span class="text-ink/40">${escapeHtml(p.note)}</span>` : ""}</span>
+      <span class="font-medium">${formatMoney(p.amount)}</span>
+    </div>`).join("");
+
+  document.getElementById("debt-modal-body").innerHTML = `
+    <div class="flex items-center justify-between mb-1">
+      <h2 class="font-display text-xl font-extrabold break-words min-w-0">${escapeHtml(d.creditor_name)}</h2>
+      <button onclick="closeModal('debt-modal')" class="text-ink/40 text-xl leading-none">✕</button>
+    </div>
+    ${pill}
+    ${d.note ? `<p class="text-sm text-ink/60 mb-4 break-words">${escapeHtml(d.note)}</p>` : ""}
+
+    <div class="space-y-2 text-sm border-t border-black/10 pt-3">
+      <div class="flex justify-between"><span class="text-ink/50">Total owed</span><span class="font-bold">${formatMoney(d.total_amount)}</span></div>
+      <div class="flex justify-between"><span class="text-ink/50">Paid so far</span><span class="font-semibold text-primary">${formatMoney(d.amount_paid)}</span></div>
+      <div class="flex justify-between"><span class="text-ink/50">Balance</span><span class="font-semibold ${d.status === "pending" ? "text-danger" : "text-primary"}">${d.status === "pending" ? formatMoney(d.balance) : "Settled"}</span></div>
+      <div class="flex justify-between border-t border-black/10 pt-3"><span class="text-ink/50">Owed since</span><span class="font-semibold text-right">${formatDay(d.debt_date)}</span></div>
+      ${d.due_date ? `<div class="flex justify-between"><span class="text-ink/50">Due date</span><span class="font-semibold text-right ${late ? "text-danger" : ""}">${formatDay(d.due_date)}</span></div>` : ""}
+      ${d.paid_at ? `<div class="flex justify-between"><span class="text-ink/50">Settled on</span><span class="font-semibold text-right">${new Date(d.paid_at).toLocaleDateString()}</span></div>` : ""}
+    </div>
+
+    <div class="mt-4">
+      <div class="text-xs font-semibold text-ink/45 mb-1">Payments made</div>
+      ${payments || `<div class="text-sm text-ink/40">No payments yet</div>`}
+    </div>
+
+    ${d.status === "pending" ? `
+    <div class="mt-5 border-t border-black/10 pt-4 space-y-2">
+      <label class="text-xs font-semibold text-ink/50">Record a payment</label>
+      <input id="debt-pay-amount" type="number" inputmode="decimal" min="0" step="any" value="${d.balance}" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+      <input id="debt-pay-note" maxlength="200" placeholder="Note (optional)" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+      <button id="debt-pay-btn" onclick="submitDebtPayment(${d.id})" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Record payment</button>
+    </div>` : ""}
+
+    <div class="flex gap-2 mt-4">
+      <button onclick="closeModal('debt-modal')" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Close</button>
+      <button onclick="removeDebt(${d.id})" class="py-2.5 px-4 rounded-xl border border-danger/20 text-danger font-semibold">Delete</button>
+    </div>
+  `;
+  document.getElementById("debt-modal").classList.remove("hidden");
+}
+
+async function submitDebtPayment(id) {
+  const amount = Number(document.getElementById("debt-pay-amount").value);
+  const note = document.getElementById("debt-pay-note").value.trim();
+  if (!isFinite(amount) || amount <= 0) { toast("Enter a payment amount greater than zero"); return; }
+  const btn = document.getElementById("debt-pay-btn");
+  btn.disabled = true; btn.classList.add("opacity-60"); btn.textContent = "Saving…";
+  try {
+    await Api.addDebtPayment(id, { amount, note });
+    closeModal("debt-modal");
+    toast("Payment recorded");
+    render();
+  } catch (err) {
+    toast(err.message || "Could not record that payment");
+    btn.disabled = false; btn.classList.remove("opacity-60"); btn.textContent = "Record payment";
+  }
+}
+
+async function removeDebt(id) {
+  if (!confirm("Delete this debt and its payment history? This cannot be undone.")) return;
+  try {
+    await Api.deleteDebt(id);
+    closeModal("debt-modal");
+    toast("Debt deleted");
+    render();
+  } catch (err) {
+    toast(err.message || "Could not delete that debt");
   }
 }
 
