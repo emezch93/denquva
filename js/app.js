@@ -466,6 +466,13 @@ const Api = {
     return apiJson(res);
   },
 
+  async updateDebt(id, data) {
+    const res = await authFetch(`${API_BASE}/api/debts/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+    });
+    return apiJson(res);
+  },
+
   async deleteDebt(id) {
     const res = await authFetch(`${API_BASE}/api/debts/${id}`, { method: "DELETE" });
     return apiJson(res);
@@ -2701,45 +2708,48 @@ async function ViewDebts() {
 }
 
 // ---- Add debt ----
-function openDebtForm() {
+function openDebtForm(editId = null) {
+  const d = editId ? lastRenderedDebts.find(x => x.id === editId) : null;
+  if (editId && !d) return;
   document.getElementById("debt-modal-body").innerHTML = `
     <div class="flex items-center justify-between mb-4">
-      <h2 class="font-display text-xl font-extrabold">Add debt</h2>
+      <h2 class="font-display text-xl font-extrabold">${d ? "Edit debt" : "Add debt"}</h2>
       <button onclick="closeModal('debt-modal')" class="text-ink/40 text-xl leading-none">✕</button>
     </div>
     <div class="space-y-3">
       <div>
         <label class="text-xs font-semibold text-ink/50">Who do you owe?</label>
-        <input id="debt-name" maxlength="120" placeholder="Name of person or supplier" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+        <input id="debt-name" maxlength="120" value="${d ? escapeHtml(d.creditor_name) : ""}" placeholder="Name of person or supplier" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
       </div>
       <div>
         <label class="text-xs font-semibold text-ink/50">Amount owed</label>
-        <input id="debt-amount" type="number" inputmode="decimal" min="0" step="any" placeholder="0" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+        <input id="debt-amount" type="number" inputmode="decimal" min="0" step="any" value="${d ? d.total_amount : ""}" placeholder="0" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+        ${d && d.amount_paid > 0 ? `<div class="text-xs text-ink/45 mt-1">${formatMoney(d.amount_paid)} already paid. The total cannot be less than that.</div>` : ""}
       </div>
       <div>
         <label class="text-xs font-semibold text-ink/50">What is it for? (optional)</label>
-        <input id="debt-note" maxlength="500" placeholder="e.g. 20 cartons of noodles" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+        <input id="debt-note" maxlength="500" value="${d ? escapeHtml(d.note || "") : ""}" placeholder="e.g. 20 cartons of noodles" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="text-xs font-semibold text-ink/50">Date owed</label>
-          <input id="debt-date" type="date" value="${localDateStr()}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+          <input id="debt-date" type="date" value="${d ? String(d.debt_date).slice(0, 10) : localDateStr()}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
         </div>
         <div>
           <label class="text-xs font-semibold text-ink/50">Due date (optional)</label>
-          <input id="debt-due" type="date" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
+          <input id="debt-due" type="date" value="${d && d.due_date ? String(d.due_date).slice(0, 10) : ""}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" />
         </div>
       </div>
     </div>
     <div class="flex gap-2 mt-5">
       <button onclick="closeModal('debt-modal')" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
-      <button id="debt-save-btn" onclick="submitDebt()" class="flex-1 py-2.5 rounded-xl bg-primary text-white font-semibold">Save debt</button>
+      <button id="debt-save-btn" onclick="submitDebt(${d ? d.id : "null"})" class="flex-1 py-2.5 rounded-xl bg-primary text-white font-semibold">${d ? "Save changes" : "Save debt"}</button>
     </div>
   `;
   document.getElementById("debt-modal").classList.remove("hidden");
 }
 
-async function submitDebt() {
+async function submitDebt(editId = null) {
   const creditor_name = document.getElementById("debt-name").value.trim();
   const amount = Number(document.getElementById("debt-amount").value);
   const note = document.getElementById("debt-note").value.trim();
@@ -2751,15 +2761,17 @@ async function submitDebt() {
   if (due_date && due_date < debt_date) { toast("The due date cannot be before the date owed"); return; }
 
   const btn = document.getElementById("debt-save-btn");
+  const label = btn.textContent;
   btn.disabled = true; btn.classList.add("opacity-60"); btn.textContent = "Saving…";
   try {
-    await Api.createDebt({ creditor_name, amount, note, debt_date, due_date });
+    if (editId) await Api.updateDebt(editId, { creditor_name, amount, note, debt_date, due_date });
+    else await Api.createDebt({ creditor_name, amount, note, debt_date, due_date });
     closeModal("debt-modal");
-    toast("Debt recorded");
+    toast(editId ? "Debt updated" : "Debt recorded");
     render();
   } catch (err) {
     toast(err.message || "Could not save that debt");
-    btn.disabled = false; btn.classList.remove("opacity-60"); btn.textContent = "Save debt";
+    btn.disabled = false; btn.classList.remove("opacity-60"); btn.textContent = label;
   }
 }
 
@@ -2812,6 +2824,7 @@ function openDebtDetail(id) {
 
     <div class="flex gap-2 mt-4">
       <button onclick="closeModal('debt-modal')" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Close</button>
+      <button onclick="openDebtForm(${d.id})" class="py-2.5 px-4 rounded-xl border text-primary font-semibold" style="border-color:rgba(15,107,76,0.3)">Edit</button>
       <button onclick="removeDebt(${d.id})" class="py-2.5 px-4 rounded-xl border border-danger/20 text-danger font-semibold">Delete</button>
     </div>
   `;
