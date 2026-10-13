@@ -6,6 +6,14 @@ Denquva is a business management platform that helps businesses manage products,
 
 ## What it does
 
+**Barcode scanning and POS payments**
+- Scan products with a USB or Bluetooth barcode scanner (acts like a keyboard) or the phone camera. The product SKU is the barcode, so scanning adds the item to the Multi Sale cart
+- Unknown barcode opens a quick add form (with an optional name lookup from Open Food Facts) and the new product goes straight into the cart
+- Charge screen with Cash, Card POS, Transfer, and Credit. Cash and Credit finish at once. Card and Transfer create a pending sale held for 10 minutes and complete by themselves when the payment is confirmed
+- Moniepoint and OPay terminals: Denquva sends the total to the terminal and confirms by asking the provider directly (webhooks only speed it up). Without a connected terminal, one tap on Payment received confirms it
+- Optional bank alert emails (Cloudflare Email Routing) confirm plain bank transfers when exactly one open transfer sale matches the amount
+- Held sales ("Awaiting payment"), paid sales are recorded even if the screen was closed, receipts to print or share on WhatsApp, and printable Code 128 barcode labels for products without a barcode
+
 **Landing page and accounts**
 - Public landing page that explains what Denquva does, how it works, and its main features, with Create Account and Log In buttons
 - New visitors see the landing page once. Returning visitors go straight to login, and signed in users go straight to the dashboard
@@ -87,14 +95,19 @@ denquva/
 │   ├── tailwind.css        Compiled Tailwind output
 │   └── app.css             Custom styles, including the landing page
 ├── js/
-│   └── app.js              Application logic, auth screens, and UI rendering
+│   ├── app.js              Application logic, auth screens, and UI rendering
+│   └── pos.js              Barcode scanning, charge and payment flow, receipts, labels, POS settings
 ├── icons/                  PWA icons
 ├── migrations/
 │   ├── terms_acceptance.sql   Adds terms acceptance columns to the shops table
-│   └── debts.sql              Creates the debts and debt_payments tables
+│   ├── debts.sql              Creates the debts and debt_payments tables
+│   └── pos.sql                Creates pos_integrations, pending_sales, and payment_events
 └── worker/
-    └── signup-block.js     Signup function with Turnstile and terms checks (for worker.js)
+    ├── signup-block.js     Signup function with Turnstile and terms checks (for worker.js)
+    └── pos-block.js        POS payments, Moniepoint and OPay, webhooks, alert emails (paste into worker.js)
 ```
+
+See DEPLOY.md for the step by step POS and barcode setup.
 
 The Worker itself (`worker.js`) lives in Cloudflare and is edited there.
 
@@ -127,6 +140,9 @@ Everything can be done in the Cloudflare dashboard.
 
 **4. Worker code**
 - In the Worker's Edit code view, replace the old `signup` function with the contents of `worker/signup-block.js`, then Deploy
+
+**4b. POS and barcode (optional but recommended)**
+- Follow `DEPLOY.md`. It adds the `migrations/pos.sql` tables and pastes `worker/pos-block.js` into the Worker
 
 **5. Website**
 - Set `TURNSTILE_SITE_KEY` in `js/app.js`, then upload the site files in Workers and Pages, your Pages project, Create deployment
