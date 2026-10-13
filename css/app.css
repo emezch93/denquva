@@ -202,3 +202,40 @@ main#app.landing-wide { max-width: 64rem; padding-top: 0; }
 /* ---------- Debts page ---------- */
 .pill-overdue { background: rgba(193, 68, 60, 0.12); color: #C1443C; }
 .break-words { overflow-wrap: anywhere; }
+
+
+/* POS: scanner, charge sheet, waiting screen, receipt, labels, camera */
+.pos-cam-btn { flex: 0 0 auto; width: 2.75rem; border-radius: 0.75rem; border: 1px solid rgba(22,36,29,0.1); background: #E4F1EA; color: #0B5038; display: flex; align-items: center; justify-content: center; }
+.pos-ready-dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; background: #0F6B4C; display: inline-block; }
+.pos-methods { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+.pos-method { display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; padding: 0.85rem; border-radius: 1rem; border: 1px solid rgba(22,36,29,0.1); background: #fff; text-align: left; }
+.pos-method:active { background: #E4F1EA; }
+.pos-method.is-off { opacity: 0.45; }
+.pos-method-icon { color: #0F6B4C; }
+.pos-method-label { font-weight: 700; font-size: 0.95rem; }
+.pos-method-hint { font-size: 0.72rem; color: rgba(22,36,29,0.5); }
+.pos-wait { display: inline-flex; align-items: center; gap: 0.45rem; margin-top: 0.6rem; padding: 0.35rem 0.8rem; border-radius: 9999px; background: #FBEBD3; color: #B9721B; font-size: 0.8rem; font-weight: 600; }
+.pos-wait.is-expired { background: #F8E2DF; color: #C1443C; }
+.pos-wait-dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; background: currentColor; animation: pos-pulse 1.2s ease-in-out infinite; }
+.pos-wait-time { font-variant-numeric: tabular-nums; }
+@keyframes pos-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.pos-held { display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem; width: 100%; padding: 0.7rem 0.8rem; margin-bottom: 0.5rem; border-radius: 0.9rem; border: 1px solid rgba(22,36,29,0.1); text-align: left; background: #fff; }
+.pos-tick { width: 3rem; height: 3rem; margin: 0 auto; border-radius: 9999px; background: #E4F1EA; color: #0F6B4C; font-size: 1.6rem; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.pos-receipt { border: 1px dashed rgba(22,36,29,0.25); border-radius: 0.9rem; padding: 0.9rem; background: #FAF7F1; }
+.pos-r-shop { text-align: center; font-weight: 800; }
+.pos-r-meta { text-align: center; font-size: 0.72rem; color: rgba(22,36,29,0.5); margin: 0.2rem 0 0.5rem; }
+.pos-r-row { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.85rem; padding: 0.15rem 0; }
+.pos-r-total { border-top: 1px dashed rgba(22,36,29,0.3); margin-top: 0.4rem; padding-top: 0.5rem; font-weight: 800; }
+.pos-label-list { max-height: 14rem; overflow-y: auto; border: 1px solid rgba(22,36,29,0.06); border-radius: 0.9rem; }
+.pos-label-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.75rem; border-bottom: 1px solid rgba(22,36,29,0.05); font-size: 0.9rem; }
+.pos-label-row.is-off { opacity: 0.5; }
+.pos-hook { background: #FAF7F1; border-radius: 0.9rem; padding: 0.7rem 0.8rem; }
+.pos-hook-url { font-size: 0.72rem; word-break: break-all; user-select: all; }
+.pos-cam-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pos-cam-frame { position: absolute; left: 10%; right: 10%; top: 32%; height: 24%; border: 2px solid #fff; border-radius: 1rem; box-shadow: 0 0 0 9999px rgba(0,0,0,0.45); }
+.pos-cam-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.25rem calc(1rem + env(safe-area-inset-bottom)); background: rgba(0,0,0,0.6); color: #fff; }
+.pos-cam-note { font-size: 0.9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pos-cam-close { background: #fff; color: #16241D; font-weight: 700; padding: 0.6rem 1.4rem; border-radius: 9999px; }
+.pos-clip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pos-sub { display: block; font-size: 0.75rem; color: rgba(22,36,29,0.4); }
+.pos-events > * + * { margin-top: 0.4rem; }
