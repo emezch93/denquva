@@ -4,7 +4,7 @@ const USE_SAMPLE_DATA = false;
 // only in the Worker as TURNSTILE_SECRET_KEY. Leave empty to hide the widget.
 const TURNSTILE_SITE_KEY = "0x4AAAAAAFS-OZp-MCP-4szJ";
 // Bump when the Terms of Service or Privacy Policy text changes.
-const TERMS_VERSION = "2026-10-10";
+const TERMS_VERSION = "2026-10-13";
 const CURRENCIES = {
   NGN: { symbol: "₦", locale: "en-NG", name: "Nigerian Naira" },
   USD: { symbol: "$", locale: "en-US", name: "US Dollar" },
@@ -1519,7 +1519,8 @@ async function ViewProducts() {
         class="flex-1 md:flex-none md:w-64 bg-surface border border-black/10 rounded-full px-4 py-2.5 text-sm" />
       <button onclick="openProductForm()" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full text-sm whitespace-nowrap">+ Add</button>
     </div>
-    <div class="flex justify-end mb-3">
+    <div class="flex justify-end gap-2 mb-3">
+      <button onclick="posOpenLabels()" class="bg-primary-light text-primary-dark font-semibold px-4 py-2 rounded-full text-sm">Barcode labels</button>
       <button onclick="openMultiSaleModal()" class="bg-amber text-white font-semibold px-4 py-2 rounded-full text-sm flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>Multi Sale</button>
     </div>
     <div class="product-grid">${cards}</div>
@@ -1638,7 +1639,10 @@ function openProductForm(id) {
       </div>
       <div class="grid grid-cols-2 gap-2">
         <input id="pf-category" placeholder="Category" value="${product?.category || ""}" class="border border-black/10 rounded-xl px-3 py-2.5" />
-        <input id="pf-sku" placeholder="SKU" value="${product?.sku || ""}" class="border border-black/10 rounded-xl px-3 py-2.5" />
+        <div class="flex gap-1 min-w-0">
+          <input id="pf-sku" placeholder="SKU or barcode" value="${product?.sku || ""}" class="min-w-0 flex-1 border border-black/10 rounded-xl px-3 py-2.5" />
+          <button type="button" onclick="posScanIntoSku()" title="Scan barcode" class="pos-cam-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg></button>
+        </div>
       </div>
       <div class="grid grid-cols-2 gap-2">
         <input id="pf-price" type="number" placeholder="Selling price" value="${product?.selling_price ?? ""}" class="border border-black/10 rounded-xl px-3 py-2.5" />
@@ -1710,6 +1714,10 @@ async function saveProduct(id) {
     low_stock_threshold: parseInt(document.getElementById("pf-threshold").value) || 5,
   };
   if (!data.name) { toast("Product name is required"); return; }
+  if (data.sku && typeof cachedProducts !== "undefined") {
+    const dup = cachedProducts.find(p => p.id !== id && String(p.sku || "").trim().toLowerCase() === data.sku.toLowerCase());
+    if (dup) { toast(`That SKU is already used by ${dup.name}`); return; }
+  }
   if (!id) data.quantity = parseInt(document.getElementById("pf-qty").value) || 0;
   // Only send the photo when it changed. An empty string clears it.
   if ((pendingProductImage ?? "") !== (originalProductImage ?? "")) data.image_url = pendingProductImage ?? "";
@@ -1818,6 +1826,7 @@ async function openMultiSaleModal() {
   }
   renderMultiSaleModal();
   document.getElementById("multisale-modal").classList.remove("hidden");
+  if (typeof posOnMultiSaleOpen === "function") posOnMultiSaleOpen();
 }
 
 function multiSaleFilteredProducts() {
@@ -1884,10 +1893,17 @@ function renderMultiSaleModal() {
   setHtmlKeepingFocus(document.getElementById("multisale-modal-body"), `
     <h2 class="font-display text-xl font-extrabold mb-3">Multi Sale</h2>
 
-    <input id="multisale-search" type="text" placeholder="Search products to add"
-      value="${multiSaleSearchTerm}"
-      oninput="multiSaleSearchTerm = this.value; renderMultiSaleModal()"
-      class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
+    <div class="flex gap-2 mb-2">
+      <input id="multisale-search" type="text" placeholder="Search products or scan a barcode"
+        value="${multiSaleSearchTerm}"
+        oninput="multiSaleSearchTerm = this.value; renderMultiSaleModal()"
+        class="flex-1 min-w-0 border border-black/10 rounded-xl px-3 py-2.5" />
+      <button onclick="posScanWithCamera()" title="Scan with camera" class="pos-cam-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg></button>
+    </div>
+    <div class="flex items-center justify-between gap-2 mb-2">
+      <div class="text-xs text-ink/45 flex items-center gap-1.5"><span class="pos-ready-dot"></span>Scanner ready. Scan an item to add it.</div>
+      ${posPendingCount ? `<button onclick="posShowPendingList()" class="text-xs bg-amber-light text-amber-dark font-semibold px-3 py-1 rounded-full whitespace-nowrap">Awaiting payment (${posPendingCount})</button>` : ""}
+    </div>
 
     ${suggestionChips ? `
     <div class="mb-2">
@@ -1907,7 +1923,7 @@ function renderMultiSaleModal() {
 
     <div class="flex gap-2">
       <button onclick="closeModal('multisale-modal')" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
-      <button onclick="confirmMultiSale()" ${cartCount ? "" : "disabled"} class="flex-1 py-2.5 rounded-xl font-semibold ${cartCount ? "bg-primary text-white" : "bg-black/10 text-ink/30"}">Confirm Sale</button>
+      <button onclick="posOpenCharge()" ${cartCount ? "" : "disabled"} class="flex-1 py-2.5 rounded-xl font-semibold ${cartCount ? "bg-primary text-white" : "bg-black/10 text-ink/30"}">Charge ${cartCount ? formatMoney(cartTotal) : ""}</button>
     </div>
   `);
 }
@@ -1939,8 +1955,9 @@ function removeFromMultiSaleCart(productId) {
 async function confirmMultiSale() {
   if (multiSaleCart.size === 0) return;
   const items = [...multiSaleCart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
+  const snapshot = typeof posCartSnapshot === "function" ? posCartSnapshot() : null;
 
-  const btn = document.querySelector('#multisale-modal-body button[onclick="confirmMultiSale()"]');
+  const btn = document.querySelector('#multisale-modal-body button[onclick="posOpenCharge()"]');
   if (btn) { btn.disabled = true; btn.textContent = "Selling…"; }
 
   try {
@@ -1953,12 +1970,13 @@ async function confirmMultiSale() {
     } else {
       toast(`Sold ${result.succeeded.length} items for ${formatMoney(result.total_amount)}`);
     }
+    if (snapshot) posAfterCashSale(snapshot, result);
 
     multiSaleCart = new Map();
     render();
   } catch (err) {
     toast(err.message || "Could not complete the sale");
-    if (btn) { btn.disabled = false; btn.textContent = "Confirm Sale"; }
+    renderMultiSaleModal();
   }
 }
 
@@ -2024,7 +2042,7 @@ const FOOTER_INFO = {
   privacy: {
     title: "Privacy Policy",
     body: `Denquva stores the business data you enter, products, sales, stock movements, and settings, to provide
-      the service. Payment is processed by Paystack, Denquva does not store your card details. Questions you ask
+      the service. Payment is processed by Paystack, Denquva does not store your card details. If you connect a Moniepoint or OPay terminal, Denquva stores your connection keys encrypted and the payment status of sales you send to the terminal, and it never sees card numbers. Questions you ask
       the AI assistant, and any documents you upload, are sent to Google's Gemini API to generate a response;
       document uploads are summarized and the summary is kept, the original file is not stored. New sign ups are checked with Cloudflare Turnstile to block bots, and the date you accepted
       the Terms and Privacy Policy is recorded with your account. Your data is
@@ -3103,6 +3121,7 @@ async function ViewSettings() {
   originalLogo = s.logo_url || "";
   pendingLogoDataUrl = null;
   const shops = USE_SAMPLE_DATA ? [] : await Api.listShops();
+  const posSettings = !USE_SAMPLE_DATA && typeof posLoadCfg === "function" ? await posLoadCfg(true) : null;
 
   return `
     <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">Settings</h1>
@@ -3160,6 +3179,8 @@ async function ViewSettings() {
       </div>
       <button onclick="saveSettings()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-2">Save Settings</button>
     </div>
+
+    ${!USE_SAMPLE_DATA && typeof posSettingsCardHtml === "function" ? posSettingsCardHtml(posSettings) : ""}
 
     <div class="card p-4 mt-4">
       <h2 class="font-display font-bold mb-1">Business report</h2>
