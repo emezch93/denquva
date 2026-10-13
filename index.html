@@ -134,6 +134,14 @@
     <div class="bg-surface w-full md:max-w-2xl rounded-t-3xl md:rounded-3xl p-6 max-h-[90vh] overflow-y-auto" id="multisale-modal-body"></div>
   </div>
 
+  <!-- POS sheet (charge, waiting, receipt, labels, quick add) -->
+  <div id="pos-modal" class="hidden fixed inset-0 bg-black/40 flex items-end md:items-center justify-center" style="z-index:60">
+    <div class="bg-surface w-full md:max-w-sm rounded-t-3xl md:rounded-3xl p-6 max-h-[90vh] overflow-y-auto" id="pos-modal-body"></div>
+  </div>
+
+  <!-- Camera barcode scanner -->
+  <div id="camera-modal" class="hidden fixed inset-0 bg-black" style="z-index:70"></div>
+
   <!-- Credit Sale modal -->
   <div id="creditsale-modal" class="hidden fixed inset-0 z-40 bg-black/40 flex items-end md:items-center justify-center">
     <div class="bg-surface w-full md:max-w-2xl rounded-t-3xl md:rounded-3xl p-6 max-h-[90vh] overflow-y-auto" id="creditsale-modal-body"></div>
@@ -167,6 +175,7 @@
   <div id="toast" class="hidden fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-50 bg-ink text-white text-sm px-4 py-2.5 rounded-full shadow-lg"></div>
 
   <script src="js/app.js" defer></script>
+  <script src="js/pos.js" defer></script>
   <script>setTimeout(function(){var f=document.getElementById("site-footer");if(f)f.classList.remove("hidden")},5000)</script>
 </body>
 </html>
