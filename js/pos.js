@@ -414,7 +414,7 @@ function posWaitingHint(p) {
   }
   return { warn: false, text: p.method === "card"
     ? "Charge the customer on your POS terminal. Tap Payment received when it goes through."
-    : "Give the customer your account number. Tap Payment received when the alert arrives, or let alert emails confirm it." };
+    : "Give the customer your account number. Tap Payment received when the alert arrives, or set up bank alerts in Settings so it confirms by itself." };
 }
 
 function posWaiting(p) {
@@ -857,6 +857,13 @@ function posSettingsCardHtml(cfg) {
         <div id="pos-hook-url" class="pos-hook-url" data-moniepoint="${escapeHtml(hook("moniepoint"))}" data-opay="${escapeHtml(hook("opay"))}"></div>
         <button onclick="posCopy(posEl('pos-hook-url').textContent)" class="text-xs font-semibold text-primary mt-1">Copy</button>
       </div>
+      <div class="pos-hook">
+        <div class="text-xs font-semibold mb-1">Bank transfer alerts</div>
+        <div class="text-xs text-ink/50 mb-1">Confirms plain bank transfers by itself, with any bank. On the phone that gets your bank alert SMS, install an SMS forwarder app (for example MacroDroid or Tasker on Android). Make it send each incoming SMS to this address as an HTTP POST, with the message text in the body.</div>
+        <div class="pos-hook-url">${escapeHtml(`${API_BASE}/webhooks/alert/${cfg.webhook_token}`)}</div>
+        <button onclick="posCopy('${escapeHtml(`${API_BASE}/webhooks/alert/${cfg.webhook_token}`)}')" class="text-xs font-semibold text-primary mt-1">Copy</button>
+        <div class="text-xs text-ink/40 mt-1">It only confirms when one open transfer sale has exactly the credited amount. Otherwise tap Payment received.</div>
+      </div>
       ${cfg.email_domain ? `<div class="pos-hook">
         <div class="text-xs text-ink/50 mb-1">Bank alert email address. Forward your bank's credit alerts here so transfers confirm by themselves.</div>
         <div class="pos-hook-url">pos-${escapeHtml(cfg.webhook_token)}@${escapeHtml(cfg.email_domain)}</div>
@@ -891,7 +898,7 @@ async function posLoadEvents() {
   try {
     const r = await PosApi.events();
     box.innerHTML = r.events.length
-      ? r.events.map(e => `<div><span class="text-ink/30">${posNowClock(e.created_at)}</span><br>${escapeHtml(e.summary)}${e.detail && e.kind === "email" ? `<br><span class="text-ink/40">${escapeHtml(e.detail)}</span>` : ""}</div>`).join("")
+      ? r.events.map(e => `<div><span class="text-ink/30">${posNowClock(e.created_at)}</span><br>${escapeHtml(e.summary)}${e.detail && (e.kind === "email" || e.kind === "alert") ? `<br><span class="text-ink/40">${escapeHtml(e.detail)}</span>` : ""}</div>`).join("")
       : "Nothing yet.";
   } catch (err) { box.textContent = posErr(err); }
 }
