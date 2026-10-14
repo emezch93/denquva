@@ -11,7 +11,7 @@ Denquva is a business management platform that helps businesses manage products,
 - Unknown barcode opens a quick add form (with an optional name lookup from Open Food Facts) and the new product goes straight into the cart
 - Charge screen with Cash, Card POS, Transfer, and Credit. Cash and Credit finish at once. Card and Transfer create a pending sale held for 10 minutes and complete by themselves when the payment is confirmed
 - Moniepoint and OPay terminals: Denquva sends the total to the terminal and confirms by asking the provider directly (webhooks only speed it up). Without a connected terminal, one tap on Payment received confirms it
-- Optional bank alert emails (Cloudflare Email Routing) confirm plain bank transfers when exactly one open transfer sale matches the amount
+- Plain bank transfers confirm by themselves: a phone SMS forwarder app posts the bank alert to a private address from Settings, and Denquva confirms only when exactly one open transfer sale matches the credited amount (bank alert emails through Cloudflare Email Routing are an optional alternative)
 - Held sales ("Awaiting payment"), paid sales are recorded even if the screen was closed, receipts to print or share on WhatsApp, and printable Code 128 barcode labels for products without a barcode
 
 **Landing page and accounts**
