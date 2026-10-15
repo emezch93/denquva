@@ -1,4 +1,4 @@
-const CACHE_NAME = "denquva-shell-v23";
+const CACHE_NAME = "denquva-shell-v24";
 const RUNTIME_CACHE = "denquva-runtime-v5";
 const SHELL_FILES = [
   "./",
@@ -7,6 +7,7 @@ const SHELL_FILES = [
   "./css/tailwind.css",
   "./js/app.js",
   "./js/pos.js",
+  "./js/reverse.js",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
