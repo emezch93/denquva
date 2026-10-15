@@ -6,6 +6,13 @@ Denquva is a business management platform that helps businesses manage products,
 
 ## What it does
 
+**Reverse a sale**
+- A sale made by mistake can be reversed from three places: the **Reverse this sale** button on a sale's details (Sales page), the **Sold the wrong item? Reverse this sale** link on the receipt, and an **Undo** bar that shows for a few seconds after a single sale
+- The sale is removed from sales, revenue, profit, the dashboard, reports and the AI. A full copy is kept in `sale_reversals` with the reason and the time
+- The items go back into stock by default. The owner can untick **Put the items back in stock** (for example for an imported sale that never took stock). The stock history gets a "Sale #N reversed" entry
+- **Sales, Reversed** lists every reversed sale. Reversing the same sale twice, or at the same moment from two screens, only ever happens once
+- Money is never sent back by Denquva. The screen reminds the owner to refund a customer who already paid by card or transfer
+
 **Barcode scanning and POS payments**
 - Scan products with a USB or Bluetooth barcode scanner (acts like a keyboard) or the phone camera. The product SKU is the barcode, so scanning adds the item to the Multi Sale cart
 - Unknown barcode opens a quick add form (with an optional name lookup from Open Food Facts) and the new product goes straight into the cart
@@ -96,12 +103,14 @@ denquva/
 │   └── app.css             Custom styles, including the landing page
 ├── js/
 │   ├── app.js              Application logic, auth screens, and UI rendering
-│   └── pos.js              Barcode scanning, charge and payment flow, receipts, labels, POS settings
+│   ├── pos.js              Barcode scanning, charge and payment flow, receipts, labels, POS settings
+│   └── reverse.js          Reverse a sale: confirm sheet, Undo bar
 ├── icons/                  PWA icons
 ├── migrations/
 │   ├── terms_acceptance.sql   Adds terms acceptance columns to the shops table
 │   ├── debts.sql              Creates the debts and debt_payments tables
-│   └── pos.sql                Creates pos_integrations, pending_sales, and payment_events
+│   ├── pos.sql                Creates pos_integrations, pending_sales, and payment_events
+│   └── sale_reversals.sql     Creates sale_reversals (records of reversed sales)
 └── worker/
     ├── signup-block.js     Signup function with Turnstile and terms checks (for worker.js)
     └── pos-block.js        POS payments, Moniepoint and OPay, webhooks, alert emails (paste into worker.js)
@@ -140,6 +149,9 @@ Everything can be done in the Cloudflare dashboard.
 
 **4. Worker code**
 - In the Worker's Edit code view, replace the old `signup` function with the contents of `worker/signup-block.js`, then Deploy
+
+**4a. Reverse a sale**
+- In the D1 Console run each statement in `migrations/sale_reversals.sql` one at a time, then deploy the updated `worker.js`
 
 **4b. POS and barcode (optional but recommended)**
 - Follow `DEPLOY.md`. It adds the `migrations/pos.sql` tables and pastes `worker/pos-block.js` into the Worker
