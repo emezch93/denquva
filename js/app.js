@@ -370,6 +370,22 @@ const Api = {
     return apiJson(res);
   },
 
+  // Undo a sale made by mistake. restock puts the items back in stock.
+  async reverseSales(saleIds, { restock = true, reason = "" } = {}) {
+    if (USE_SAMPLE_DATA) throw new Error("Reversing a sale is not available in the demo");
+    const res = await authFetch(`${API_BASE}/api/sales/reverse`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sale_ids: saleIds, restock, reason }),
+    });
+    return apiJson(res);
+  },
+
+  async getReversals(range = "all") {
+    if (USE_SAMPLE_DATA) return [];
+    const res = await authFetch(`${API_BASE}/api/sales/reversals?range=${range}`);
+    return apiJson(res);
+  },
+
   // ---- Credit sales ----
   async getCreditSales({ search = "", status = "", sort = "date", dir = "desc" } = {}) {
     if (USE_SAMPLE_DATA) {
@@ -1793,6 +1809,10 @@ async function confirmSale(productId) {
     const result = await Api.sell(productId, sellQty);
     closeModal("sell-modal");
     toast(`Sold. New stock: ${result.new_quantity}`);
+    if (result.sale_id && typeof reverseShowUndoBar === "function") {
+      const p = typeof cachedProducts !== "undefined" ? cachedProducts.find(x => x.id === productId) : null;
+      reverseShowUndoBar([{ id: result.sale_id, product_name: p ? p.name : "Item", quantity: sellQty, total_amount: result.total_amount }]);
+    }
     render();
   } catch (err) {
     toast(err.message);
@@ -2078,15 +2098,13 @@ function showFooterInfo(key) {
 let salesRange = "today";
 
 async function ViewSales() {
+  if (salesRange === "reversed") return ViewReversedSales();
   const sales = await Api.getSales(salesRange);
   lastRenderedSales = sales;
   const totalRevenue = sales.reduce((a, s) => a + s.total_amount, 0);
   const totalProfit = sales.reduce((a, s) => a + s.estimated_profit, 0);
 
-  const ranges = [["today", "Today"], ["week", "This week"], ["month", "This month"], ["all", "All"]];
-  const tabs = ranges.map(([key, label]) => `
-    <button onclick="salesRange='${key}'; render()" class="px-3 py-1.5 rounded-full text-sm font-medium ${salesRange === key ? "bg-primary text-white" : "bg-surface border border-black/10"}">${label}</button>
-  `).join("");
+  const tabs = salesTabsHtml();
 
   const rows = sales.length
     ? sales.map(s => `
@@ -2113,6 +2131,51 @@ async function ViewSales() {
   `;
 }
 
+function salesTabsHtml() {
+  const ranges = [["today", "Today"], ["week", "This week"], ["month", "This month"], ["all", "All"], ["reversed", "Reversed"]];
+  return ranges.map(([key, label]) => `
+    <button onclick="salesRange='${key}'; render()" class="px-3 py-1.5 rounded-full text-sm font-medium ${salesRange === key ? "bg-primary text-white" : "bg-surface border border-black/10"}">${label}</button>
+  `).join("");
+}
+
+// ---- Reversed sales ----
+// Sales the owner undid. They are not in Revenue or Profit. This list is the
+// record of what was reversed, when, why, and whether stock went back.
+async function ViewReversedSales() {
+  let rows = [];
+  let problem = "";
+  try { rows = await Api.getReversals("all"); } catch (err) { problem = err.message || "Could not load reversed sales"; }
+  const removed = rows.reduce((a, r) => a + Number(r.total_amount || 0), 0);
+  const list = problem
+    ? `<div class="text-center py-12 text-danger">${escapeHtml(problem)}</div>`
+    : rows.length
+      ? rows.map(r => `
+        <div class="py-3 border-b border-black/5 last:border-0">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="font-medium">${escapeHtml(r.product_name || "Item")}</div>
+              <div class="text-xs text-ink/45">${r.quantity} units · sold ${new Date(r.sold_at).toLocaleString()}</div>
+              <div class="text-xs text-ink/45">Reversed ${new Date(r.reversed_at).toLocaleString()}${r.reason ? ` · ${escapeHtml(r.reason)}` : ""}</div>
+            </div>
+            <div class="text-right" style="flex-shrink:0">
+              <div class="font-semibold text-danger">${formatMoney(r.total_amount)}</div>
+              <div class="text-xs text-ink/45">${r.restocked ? "Stock put back" : "Stock not changed"}</div>
+            </div>
+          </div>
+        </div>`).join("")
+      : `<div class="text-center py-12 text-ink/40">No sales have been reversed.</div>`;
+  return `
+    <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">Sales</h1>
+    <div class="flex gap-2 mb-4 flex-wrap">${salesTabsHtml()}</div>
+    <div class="grid grid-cols-2 gap-3 mb-4">
+      <div class="stat-card"><div class="text-xs text-ink/50">Sales reversed</div><div class="font-display text-xl font-extrabold">${rows.length}</div></div>
+      <div class="stat-card"><div class="text-xs text-ink/50">Money removed</div><div class="font-display text-xl font-extrabold">${formatMoney(removed)}</div></div>
+    </div>
+    <p class="text-xs text-ink/45 mb-3">These sales are not counted in your revenue, profit or reports.</p>
+    <div class="card p-4">${list}</div>
+  `;
+}
+
 // ---- Sale detail modal ----
 // The list rows only ever show product, quantity and total, same as a
 // banking app's transaction list. Tapping one opens the full record
@@ -2135,7 +2198,8 @@ function openSaleDetail(saleId) {
       <div class="flex justify-between"><span class="text-ink/50">Estimated profit</span><span class="font-semibold text-primary">${formatMoney(s.estimated_profit)}</span></div>
       <div class="flex justify-between border-t border-black/10 pt-3"><span class="text-ink/50">Date & time</span><span class="font-semibold text-right">${new Date(s.sold_at).toLocaleString()}</span></div>
     </div>
-    <button onclick="closeModal('sale-detail-modal')" class="w-full mt-5 py-2.5 rounded-xl border border-black/10 font-semibold">Close</button>
+    <button onclick="openReverseSheetById(${s.id})" class="w-full mt-5 py-2.5 rounded-xl bg-danger-light text-danger font-semibold">Reverse this sale</button>
+    <button onclick="closeModal('sale-detail-modal')" class="w-full mt-2 py-2.5 rounded-xl border border-black/10 font-semibold">Close</button>
   `;
   document.getElementById("sale-detail-modal").classList.remove("hidden");
 }
