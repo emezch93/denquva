@@ -542,7 +542,8 @@ async function posFinalize(p, quiet) {
     if (quiet) {
       toast(`Recorded a paid sale of ${formatMoney(p.total)}`);
     } else {
-      posShowReceipt({ items: p.items, total: p.total, method: p.method, reference: p.id, failed, time: p.paid_at || Date.now() });
+      const sales = (result.succeeded || []).filter(x => x.sale_id).map(x => ({ id: x.sale_id, product_name: x.product_name, quantity: x.quantity, total_amount: x.total_amount }));
+      posShowReceipt({ items: p.items, total: p.total, method: p.method, reference: p.id, failed, time: p.paid_at || Date.now(), sales });
     }
     render();
   } catch (err) {
@@ -645,7 +646,8 @@ function posShowReceipt(r) {
       <button onclick="posPrintReceipt()" class="py-2.5 rounded-xl border border-black/10 font-semibold">Print</button>
       <button onclick="posShareReceipt()" class="py-2.5 rounded-xl border border-black/10 font-semibold">WhatsApp</button>
     </div>
-    <button onclick="posCloseSheet()" class="w-full py-2.5 rounded-xl bg-primary text-white font-semibold mt-2">Done</button>`);
+    <button onclick="posCloseSheet()" class="w-full py-2.5 rounded-xl bg-primary text-white font-semibold mt-2">Done</button>
+    ${r.sales && r.sales.length ? `<button onclick="posReverseFromReceipt()" class="w-full mt-2 py-2 text-sm font-semibold text-danger">Sold the wrong item? Reverse this sale</button>` : ""}`);
 }
 
 function posPrintHtml(html) {
@@ -684,7 +686,8 @@ function posAfterCashSale(snapshot, result) {
   const sold = new Map((result.succeeded || []).map(s => [s.product_id, s]));
   const items = snapshot.items.filter(i => sold.has(i.product_id)).map(i => ({ ...i, quantity: sold.get(i.product_id).quantity }));
   const total = items.reduce((n, i) => n + i.unit_price * i.quantity, 0);
-  posShowReceipt({ items, total, method: "cash", failed: result.failed || [], time: Date.now() });
+  const sales = (result.succeeded || []).filter(x => x.sale_id).map(x => ({ id: x.sale_id, product_name: x.product_name, quantity: x.quantity, total_amount: x.total_amount }));
+  posShowReceipt({ items, total, method: "cash", failed: result.failed || [], time: Date.now(), sales });
 }
 
 // ---------------- barcode labels (Code 128) ----------------
