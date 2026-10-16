@@ -1180,7 +1180,7 @@ async function ViewAuth() {
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
       <div class="text-center mb-6">
         <h1 class="brand-row brand-row-center font-display text-3xl font-extrabold text-primary-dark"><img src="icons/icon-192.png" alt="" width="36" height="36" class="brand-logo brand-logo-lg" /><span>Denquva</span></h1>
-        <p class="text-sm text-ink/50 mt-1">Simple stock and sales, in your pocket.</p>
+        <p class="text-sm text-ink/50 mt-1">Your whole business covered</p>
       </div>
       <div class="flex bg-black/5 rounded-full p-1 mb-5">
         <button onclick="goAuth('login')" class="flex-1 py-2 rounded-full text-sm font-semibold ${!signup ? "bg-white shadow-sm" : "text-ink/50"}">Log in</button>
@@ -2047,7 +2047,7 @@ function closeModal(id) {
 const FOOTER_INFO = {
   about: {
     title: "About Denquva",
-    body: `Denquva is a complete business management platform that helps business owners manage inventory, sales, profit, customer credit, debts, and multiple shops in one place, with AI powered business assistance.
+    body: `Denquva is a complete business management platform that helps business owners manage inventory, sales, profit, customer credit, debts, and multiple shops in one place, with an AI powered business assistance.
     Add products with photos and pricing, record sales with one tap, and every transaction is logged with a full audit trail. A built-in AI assistant answers business questions and reads uploaded receipts and invoices to help explain your data. One account supports multiple shops or branches, each fully independent.`,
   },
   support: {
