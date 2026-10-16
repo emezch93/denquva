@@ -1,6 +1,6 @@
 # Denquva
 
-Denquva is a business management platform that helps businesses manage products, inventory, sales, profit, customer credit, and multiple shops in one place, with AI powered business assistance.
+Denquva helps business owners manage products, inventory, sales, profit, customer credit, debts, and multiple shops in one place, with AI powered business assistance.
 
 **Live app:** https://denquva.pages.dev
 
