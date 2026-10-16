@@ -2047,11 +2047,8 @@ function closeModal(id) {
 const FOOTER_INFO = {
   about: {
     title: "About Denquva",
-    body: `Denquva is a complete business management platform for tracking inventory, sales, customer credit and profit in real time.
-      Add products with photos and pricing, record sales with one tap, and every transaction is logged with a
-      full audit trail. A built-in AI assistant answers business questions and reads uploaded receipts and
-      invoices to help explain your data. One account supports multiple shops or branches, each fully
-      independent.`,
+    body: `Denquva is a complete business management platform that helps business owners manage inventory, sales, profit, customer credit, debts, and multiple shops in one place, with AI powered business assistance.
+    Add products with photos and pricing, record sales with one tap, and every transaction is logged with a full audit trail. A built-in AI assistant answers business questions and reads uploaded receipts and invoices to help explain your data. One account supports multiple shops or branches, each fully independent.`,
   },
   support: {
     title: "Support",
