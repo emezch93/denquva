@@ -1,7 +1,7 @@
 {
   "name": "Denquva | Business Management Platform",
   "short_name": "Denquva",
-  "description": "Denquva helps business owners manage products, inventory, sales, profit, customer credit, debts, and multiple shops in one place, with AI powered business assistance."
+  "description": "Denquva helps business owners manage products, inventory, sales, profit, customer credit, debts, and multiple shops in one place, with AI powered business assistance.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
