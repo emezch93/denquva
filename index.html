@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Denquva | Business Management Platform</title>
-<meta name="description" content="Denquva helps businesses manage products, inventory, sales, profit, customer credit, and multiple shops in one place, with AI powered business assistance." />
+<meta name="description" content="Denquva helps business owners manage products, inventory, sales, profit, customer credit, debts, and multiple shops in one place, with AI powered business assistance." />
 <meta name="theme-color" content="#0F6B4C" />
 <link rel="canonical" href="https://denquva.pages.dev/" />
 
@@ -12,13 +12,13 @@
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Denquva" />
 <meta property="og:title" content="Denquva | Business Management Platform" />
-<meta property="og:description" content="Manage products, inventory, sales, profit, customer credit, and multiple shops in one place with Denquva." />
+<meta property="og:description" content="Manage products, inventory, sales, profit, customer credit, debts, and multiple shops in one place with AI powered business assistance." />
 <meta property="og:url" content="https://denquva.pages.dev/" />
 <meta property="og:image" content="https://denquva.pages.dev/icons/icon-512.png" />
 
 <meta name="twitter:card" content="summary" />
 <meta name="twitter:title" content="Denquva | Business Management Platform" />
-<meta name="twitter:description" content="Manage products, inventory, sales, profit, customer credit, and multiple shops in one place with Denquva." />
+<meta name="twitter:description" content="Manage products, inventory, sales, profit, customer credit, debts, and multiple shops in one place with AI powered business assistance." />
 <meta name="twitter:image" content="https://denquva.pages.dev/icons/icon-512.png" />
 
 <script type="application/ld+json">
@@ -42,7 +42,7 @@
   "name": "Denquva",
   "applicationCategory": "BusinessApplication",
   "operatingSystem": "Web, Android, iOS",
-  "description": "Manage products, inventory, sales, profit, customer credit, and multiple shops in one place with AI powered business assistance.",
+  "description": "Manage products, inventory, sales, profit, customer credit, debts, and multiple shops in one place with AI powered business assistance.",
   "url": "https://denquva.pages.dev/",
   "creator": {
     "@type": "Organization",
@@ -56,38 +56,43 @@
   }
 }
 </script>
+
 <link rel="manifest" href="manifest.json" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="preconnect" href="https://denquva-api.emezch93.workers.dev" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
 <!-- Fonts load without blocking first paint; system fonts show until they arrive -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600&display=swap"></noscript>
+
 <!-- papaparse and xlsx are now loaded on demand from js/app.js -->
 <link rel="stylesheet" href="css/tailwind.css" />
 <link rel="stylesheet" href="css/app.css" />
 </head>
+
 <body class="bg-paper text-ink font-body antialiased min-h-screen pb-20 md:pb-0 md:pl-64">
 
   <noscript>
     <style>#site-footer{display:block !important}</style>
+
     <div class="max-w-sm mx-auto mt-10 px-4 text-center">
       <h1 class="font-display text-3xl font-extrabold text-primary-dark">Denquva</h1>
-      <p class="text-sm text-ink/50 mt-1">Simple stock and sales, in your pocket.</p>
+
+      <p class="text-sm text-ink/50 mt-1">Your whole business, covered.</p>
+
       <p class="text-sm text-ink/70 mt-3">
-        Denquva is a shop management platform for tracking inventory, sales, and profit in real time, with an
-        AI assistant that reads receipts and answers questions about your business. Please enable JavaScript
-        to log in or sign up.
+        Denquva is a business management platform that helps business owners manage products, inventory, sales, profit, customer credit, debts, and multiple shops in one place, with AI powered business assistance. Please enable JavaScript to log in or create an account.
       </p>
     </div>
   </noscript>
-
+  
   <!-- Desktop sidebar -->
   <aside id="sidebar-aside" class="hidden md:flex md:flex-col md:fixed md:inset-y-0 md:left-0 md:w-64 bg-primary-dark text-white px-5 py-6">
     <div class="brand-row font-display text-2xl font-extrabold tracking-tight mb-8"><img src="icons/icon-192.png" alt="" width="28" height="28" class="brand-logo" /><span>Denquva</span></div>
     <nav class="flex flex-col gap-1" id="sidebar-nav"></nav>
-    <div class="mt-auto text-xs text-white/60 pt-6">Simple stock and sales, in your pocket.</div>
+    <div class="mt-auto text-xs text-white/60 pt-6">Your whole business, covered.</div>
   </aside>
 
   <!-- Top bar (mobile) -->
