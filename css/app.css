@@ -243,3 +243,8 @@ main#app.landing-wide { max-width: 64rem; padding-top: 0; }
 /* Reverse a sale: Undo bar */
 .rv-undo { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(5.2rem + env(safe-area-inset-bottom)); z-index: 55; display: flex; align-items: center; gap: 1rem; padding: 0.55rem 0.6rem 0.55rem 1.1rem; border-radius: 9999px; background: #16241D; color: #fff; font-size: 0.9rem; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
 .rv-undo button { background: #F2A33A; color: #16241D; font-weight: 700; padding: 0.35rem 1rem; border-radius: 9999px; }
+
+/* extras: offline sync pill */
+.x-pill { position: fixed; top: 3.6rem; right: 0.75rem; z-index: 45; background: #0B5038; color: #fff; font-size: 0.75rem; font-weight: 600; padding: 0.4rem 0.8rem; border-radius: 9999px; box-shadow: 0 4px 14px rgba(0,0,0,0.2); }
+.x-pill.x-pill-bad { background: #C1443C; }
+@media (min-width: 768px) { .x-pill { top: 0.9rem; } }
