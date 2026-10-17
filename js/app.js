@@ -805,7 +805,7 @@ const NAV_ICON_SVG = {
 };
 
 const NAV_ALL = [
-  { id: "dashboard", label: "Dashboard", icon: NAV_ICON_SVG.dashboard, hint: "Today's sales, revenue, and low stock at a glance" },
+  { id: "dashboard", label: "Dashboard", icon: NAV_ICON_SVG.dashboard, hint: "Today's sales, revenue, and low stock at a glance", short: "Home" },
   { id: "products", label: "Products", icon: NAV_ICON_SVG.products, hint: "Add, edit, sell, and restock your products" },
   { id: "sales", label: "Sales", icon: NAV_ICON_SVG.sales, hint: "Your sales history and estimated profit" },
   { id: "credit", label: "Credit Sales", icon: NAV_ICON_SVG.credit, hint: "Products given on credit, and who still owes you", short: "Credit" },
@@ -871,6 +871,9 @@ function renderNav() {
       <span>${item.icon}</span><span>${item.short || item.label}</span>
     </div>`).join("");
   document.getElementById("mobile-title").textContent = NAV_ITEMS.find(i => i.id === currentView).label;
+  const lo = document.getElementById("staff-logout");
+  if (lo) lo.classList.toggle("hidden", !isStaff());
+  if (isStaff()) sidebar.innerHTML += `<div class="nav-item" onclick="logout()" title="Log out"><span>⎋</span><span>Log out (${escapeHtml(staffName())})</span></div>`;
 }
 
 function hideNav() {
@@ -1251,6 +1254,7 @@ async function ViewAuth() {
   if (authMode === "landing") return ViewLanding();
   if (authMode === "staff") return xViewStaffLogin();
   if (authMode === "recover") return xViewRecover();
+  if (authMode === "emailcode") return xViewEmailCode();
   const signup = authMode === "signup";
   return `
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
@@ -1304,7 +1308,8 @@ function ViewForgotPassword() {
         ${forgotStep === "email" ? `
           <input id="forgot-email" type="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5"
             onkeydown="if(event.key==='Enter') submitForgotEmail()" />
-          <button id="forgot-submit-btn" onclick="submitForgotEmail()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Continue</button>
+          <button id="forgot-email-btn" onclick="xSendEmailCodeUi()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Email me a reset code</button>
+          <button id="forgot-submit-btn" onclick="submitForgotEmail()" class="w-full bg-primary-light text-primary-dark font-semibold py-2.5 rounded-xl">Use my security question</button>
           <button onclick="goAuth('recover')" class="w-full text-xs text-primary underline text-center">I have a recovery code instead</button>
         ` : `
           <p class="text-sm font-medium">${forgotQuestion}</p>
@@ -2264,38 +2269,7 @@ function salesTabsHtml() {
 // Sales the owner undid. They are not in Revenue or Profit. This list is the
 // record of what was reversed, when, why, and whether stock went back.
 async function ViewReversedSales() {
-  let rows = [];
-  let problem = "";
-  try { rows = await Api.getReversals("all"); } catch (err) { problem = err.message || "Could not load reversed sales"; }
-  const removed = rows.reduce((a, r) => a + Number(r.total_amount || 0), 0);
-  const list = problem
-    ? `<div class="text-center py-12 text-danger">${escapeHtml(problem)}</div>`
-    : rows.length
-      ? rows.map(r => `
-        <div class="py-3 border-b border-black/5 last:border-0">
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <div class="font-medium">${escapeHtml(r.product_name || "Item")}</div>
-              <div class="text-xs text-ink/45">${r.quantity} units · sold ${new Date(r.sold_at).toLocaleString()}</div>
-              <div class="text-xs text-ink/45">Reversed ${new Date(r.reversed_at).toLocaleString()}${r.reason ? ` · ${escapeHtml(r.reason)}` : ""}</div>
-            </div>
-            <div class="text-right" style="flex-shrink:0">
-              <div class="font-semibold text-danger">${formatMoney(r.total_amount)}</div>
-              <div class="text-xs text-ink/45">${r.restocked ? "Stock put back" : "Stock not changed"}</div>
-            </div>
-          </div>
-        </div>`).join("")
-      : `<div class="text-center py-12 text-ink/40">No sales have been reversed.</div>`;
-  return `
-    <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">Sales</h1>
-    <div class="flex gap-2 mb-4 flex-wrap">${salesTabsHtml()}</div>
-    <div class="grid grid-cols-2 gap-3 mb-4">
-      <div class="stat-card"><div class="text-xs text-ink/50">Sales reversed</div><div class="font-display text-xl font-extrabold">${rows.length}</div></div>
-      <div class="stat-card"><div class="text-xs text-ink/50">Money removed</div><div class="font-display text-xl font-extrabold">${formatMoney(removed)}</div></div>
-    </div>
-    <p class="text-xs text-ink/45 mb-3">These sales are not counted in your revenue, profit or reports.</p>
-    <div class="card p-4">${list}</div>
-  `;
+  return xViewReversed();
 }
 
 // ---- Sale detail modal ----
