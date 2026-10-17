@@ -668,6 +668,7 @@ function xOwnerCardsHtml(d) {
         <button onclick="xShowActivity()" class="bg-primary-light text-primary-dark font-semibold py-2.5 rounded-xl text-sm">Activity log</button>
         <button onclick="xDownloadBackup()" class="bg-primary text-white font-semibold py-2.5 rounded-xl text-sm">Full backup</button>
       </div>
+      <button onclick="xRunDiagnostics()" class="w-full bg-black/5 font-semibold py-2.5 rounded-xl text-sm">Check app setup</button>
     </div>
     ${xSupportCardHtml()}`;
 }
@@ -730,6 +731,31 @@ async function xShowActivity() {
         <div class="text-xs text-ink/50">${escapeHtml(r.actor || "")}${r.detail ? " · " + escapeHtml(r.detail) : ""}</div>
       </div>`).join("") : `<div class="text-center py-8 text-ink/40">Nothing yet.</div>`}</div>
     <button onclick="posCloseSheet()" class="w-full py-2.5 rounded-xl border border-black/10 font-semibold mt-3">Close</button>`);
+}
+async function xRunDiagnostics() {
+  try {
+    const result = await XApi.call("/api/x/health");
+    const checks = result.external_readiness || {};
+    const rows = [
+      ["Core database", result.ok],
+      ["Account signup and verification", checks.signup?.ready],
+      ["Subscription billing keys", checks.subscription?.ready],
+      ["AI service key", checks.ai?.ready],
+      ["POS database", checks.point_of_sale?.database_ready],
+      ["Delivery database", checks.delivery?.database_ready],
+      ["Owner-driver delivery", checks.delivery?.owner_driver_available],
+      ["Courier encryption key (courier only)", checks.delivery?.encryption_key_ready],
+    ];
+    const pos = checks.point_of_sale || {}, delivery = checks.delivery || {};
+    pos.terminal_credentials_saved && rows.splice(5, 0, [`${pos.provider} terminal credentials`, true]);
+    delivery.customer_requests_enabled && rows.splice(7, 0, ["Customer delivery requests enabled", true]);
+    if (delivery.courier_credentials_saved) rows.push(["EasyPost credentials saved", delivery.courier_webhook_ready && delivery.courier_sender_address_ready]);
+    posOpenSheet(`
+      <h2 class="font-display text-xl font-extrabold mb-2">App setup check</h2>
+      <p class="text-sm text-ink/50 mb-3">This checks configured keys and database setup. It does not make live provider charges or guarantee credentials are accepted by the provider.</p>
+      <div style="max-height:55vh;overflow-y:auto">${rows.map(([label, ready]) => `<div class="py-2 border-b border-black/5 last:border-0 text-sm flex justify-between gap-3"><span>${escapeHtml(label)}</span><span class="font-semibold ${ready ? "text-primary" : "text-danger"}">${ready ? "Ready" : "Needs setup"}</span></div>`).join("")}${(result.missing_tables || []).map(table => `<div class="text-xs text-danger py-1">Missing database table: ${escapeHtml(table)}</div>`).join("")}</div>
+      <button onclick="posCloseSheet()" class="w-full py-2.5 rounded-xl border border-black/10 font-semibold mt-3">Close</button>`);
+  } catch (err) { toast(xNeedServer(err)); }
 }
 async function xDownloadBackup() {
   toast("Preparing your backup…");
