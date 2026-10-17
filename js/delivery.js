@@ -24,6 +24,14 @@ function deliveryEscape(value) { return escapeHtml(value == null ? "" : String(v
 function deliveryWhen(value) { const d = new Date(value); return isNaN(d.getTime()) ? "" : d.toLocaleString(); }
 function deliveryActive(status) { return ["accepted", "ready", "in_transit"].includes(status); }
 function deliveryMoney(value) { return formatMoney(Number(value) || 0); }
+function deliveryCustomerUrl(settings) {
+  const slug = String(settings?.public_slug || "").trim();
+  if (!slug) return "";
+  const url = new URL("delivery.html", window.location.href);
+  url.search = "";
+  url.searchParams.set("shop", slug);
+  return url.href;
+}
 
 async function ViewDelivery() {
   deliveryState.error = "";
@@ -39,10 +47,11 @@ async function ViewDelivery() {
     return `<h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">Deliveries</h1><div class="card p-5 text-danger">${deliveryEscape(deliveryState.error)}</div>`;
   }
   const s = deliveryState.settings;
+  const customerUrl = deliveryCustomerUrl(s);
   const config = isStaff() ? "" : `
     <div class="card p-4 mb-4 space-y-3">
       <div><h2 class="font-display font-bold">Customer ordering link</h2><p class="text-sm text-ink/50">Share this link so customers can request delivery from this shop.</p></div>
-      <div class="flex gap-2"><input id="delivery-public-link" readonly value="${deliveryEscape(s.public_url)}" class="min-w-0 flex-1 border border-black/10 rounded-xl px-3 py-2.5 bg-black/5 text-sm" /><button onclick="deliveryCopyLink()" class="px-4 rounded-xl bg-primary text-white font-semibold">Copy</button></div>
+      <div class="flex gap-2"><input id="delivery-public-link" readonly value="${deliveryEscape(customerUrl)}" placeholder="Refresh to generate a customer link" class="min-w-0 flex-1 border border-black/10 rounded-xl px-3 py-2.5 bg-black/5 text-sm" /><button onclick="deliveryCopyLink()" ${customerUrl ? "" : "disabled"} class="px-4 rounded-xl bg-primary text-white font-semibold">Copy</button></div>
       <label class="flex items-center gap-2 text-sm font-medium"><input id="delivery-enabled" type="checkbox" ${s.enabled ? "checked" : ""} /> Accept customer requests</label>
       <label class="block text-xs text-ink/50">Flat delivery fee (${deliveryEscape(shopSettings?.currency_code || "NGN")})<input id="delivery-fee" type="number" min="0" step="0.01" value="${Number(s.flat_delivery_fee || 0)}" class="mt-1 w-full border border-black/10 rounded-xl px-3 py-2.5 text-sm text-ink" /></label>
       <div class="border-t border-black/5 pt-3"><h3 class="font-semibold text-sm">Shop sender address (used for courier rates)</h3><p class="text-xs text-ink/50 mb-2">Use the country’s two-letter ISO code, such as NG, GB, or US.</p>
