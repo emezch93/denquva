@@ -98,7 +98,7 @@
   <!-- Top bar (mobile) -->
   <header id="mobile-header" class="md:hidden sticky top-0 z-30 bg-primary-dark text-white px-4 py-3 flex items-center justify-between">
     <span class="brand-row"><img src="icons/icon-192.png" alt="" width="24" height="24" class="brand-logo brand-logo-sm" /><span class="font-display text-lg font-extrabold" id="mobile-title">Dashboard</span></span>
-    <span id="offline-pill" class="hidden text-xs bg-white/15 rounded-full px-2 py-1">Offline</span>
+    <span class="flex items-center gap-2"><span id="offline-pill" class="hidden text-xs bg-white/15 rounded-full px-2 py-1">Offline</span><button id="staff-logout" onclick="logout()" class="hidden text-xs font-semibold bg-white/15 rounded-full px-3 py-1.5">Log out</button></span>
   </header>
 
   <main id="app" class="max-w-3xl mx-auto px-4 py-5 md:py-8">
@@ -186,3 +186,4 @@
   <script>setTimeout(function(){var f=document.getElementById("site-footer");if(f)f.classList.remove("hidden")},5000)</script>
 </body>
 </html>
+
