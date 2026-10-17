@@ -808,7 +808,7 @@ const NAV_ALL = [
   { id: "dashboard", label: "Dashboard", icon: NAV_ICON_SVG.dashboard, hint: "Today's sales, revenue, and low stock at a glance", short: "Home" },
   { id: "products", label: "Products", icon: NAV_ICON_SVG.products, hint: "Add, edit, sell, and restock your products" },
   { id: "sales", label: "Sales", icon: NAV_ICON_SVG.sales, hint: "Your sales history and estimated profit" },
-  { id: "delivery", label: "Deliveries", icon: NAV_ICON_SVG.sales, hint: "Manage customer delivery requests and live tracking", short: "Delivery" },
+  { id: "delivery", label: "Deliveries", icon: NAV_ICON_SVG.delivery, hint: "Manage customer delivery requests and live tracking", short: "Delivery" },
   { id: "credit", label: "Credit Sales", icon: NAV_ICON_SVG.credit, hint: "Products given on credit, and who still owes you", short: "Credit" },
   { id: "debts", label: "Debts", icon: NAV_ICON_SVG.debts, hint: "People and suppliers you owe, with payments recorded" },
   { id: "ai", label: "AI Assistant", icon: NAV_ICON_SVG.ai, hint: "Ask questions about your business, by typing or speaking", short: "AI" },
