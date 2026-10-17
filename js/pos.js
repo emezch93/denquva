@@ -372,6 +372,8 @@ async function posMoveCartToCredit() {
   creditSaleProducts = products;
   creditSaleSearchTerm = "";
   creditSaleCustomerName = "";
+  creditSalePhone = "";
+  if (typeof xLoadCustomers === "function") await xLoadCustomers();
   creditSaleDiscount = 0;
   renderCreditSaleModal();
   posEl("creditsale-modal").classList.remove("hidden");
@@ -528,7 +530,7 @@ async function posFinalize(p, quiet) {
     }
     let result;
     try {
-      result = await Api.sellBatch(p.items.map(i => ({ product_id: i.product_id, quantity: i.quantity })));
+      result = await Api.sellBatch(p.items.map(i => ({ product_id: i.product_id, quantity: i.quantity })), { method: p.method === "transfer" ? "transfer" : "card", ref: "pos-" + p.id });
     } catch (err) {
       await PosApi.act(p.id, "release").catch(() => {});
       throw err;
