@@ -1,4 +1,4 @@
-const CACHE_NAME = "denquva-shell-v25";
+const CACHE_NAME = "denquva-shell-v26";
 const RUNTIME_CACHE = "denquva-runtime-v5";
 const SHELL_FILES = [
   "./",
@@ -8,6 +8,7 @@ const SHELL_FILES = [
   "./js/app.js",
   "./js/pos.js",
   "./js/reverse.js",
+  "./js/extras.js",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
