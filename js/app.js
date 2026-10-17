@@ -41,7 +41,47 @@ let currentShop = null; // { shop_name, email, subscription_status }
 // login's own shop, but a login that runs several shops can switch.
 let activeShopId = localStorage.getItem("denquva_active_shop_id") || null;
 
+// Who is using this device: the owner, or a staff member who logged in with a PIN.
+function xClaims() {
+  try {
+    const p = authToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(p + "=".repeat((4 - (p.length % 4)) % 4)));
+  } catch { return {}; }
+}
+function isStaff() { return !!authToken && xClaims().role === "staff"; }
+function staffName() { return xClaims().sname || "Staff"; }
+// After a subscription ends, the shop stays readable for a grace period.
+window.xReadOnly = false;
+const GRACE_DAYS = 14;
+function xLapsedAt(shop) {
+  if (!shop) return null;
+  const d = shop.lapsed_at || (shop.subscription_status === "trial" ? shop.trial_ends_at : null);
+  const t = d ? new Date(d).getTime() : NaN;
+  return Number.isFinite(t) ? t : null;
+}
+function xInGrace(shop) {
+  const t = xLapsedAt(shop);
+  return t !== null && Date.now() - t <= GRACE_DAYS * 86400000;
+}
+
 async function authFetch(url, options = {}) {
+  const res = await authFetchRaw(url, options);
+  // A staff action that needs the owner: ask for the owner PIN, then try once more.
+  if (res.status === 403 && typeof xHandleApproval === "function") {
+    let data = {};
+    try { data = await res.clone().json(); } catch {}
+    if (data.code === "approval_required") {
+      const tok = await xHandleApproval(data.error);
+      if (tok) return authFetchRaw(url, { ...options, headers: { ...(options.headers || {}), "X-Approval": tok } });
+    }
+  }
+  return res;
+}
+
+async function authFetchRaw(url, options = {}) {
+  if (window.xReadOnly && String(options.method || "GET").toUpperCase() !== "GET" && !/\/paystack\//.test(url)) {
+    throw new Error("Your subscription has ended, so Denquva is read only. Subscribe to keep selling. Your data is safe.");
+  }
   const headers = { ...(options.headers || {}) };
   if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
   if (activeShopId) headers["X-Shop-Id"] = activeShopId;
@@ -67,6 +107,7 @@ async function authFetch(url, options = {}) {
 // brand new visitor. A session that simply expired goes to login instead.
 function logout(opts = {}) {
   authToken = null;
+  window.xReadOnly = false;
   currentShop = null;
   shopSettings = null;
   activeShopId = null;
@@ -107,7 +148,7 @@ function readCache(key) {
 function writeCache(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
-function snapKey(view) { return `${CACHE_KEYS.snapPrefix}${activeShopId || "x"}_${view}`; }
+function snapKey(view) { return `${CACHE_KEYS.snapPrefix}${activeShopId || "x"}${isStaff() ? "s" : ""}_${view}`; }
 function readSnapshot(view) {
   if (NO_SNAPSHOT_VIEWS.includes(view)) return null;
   try { return localStorage.getItem(snapKey(view)); } catch { return null; }
@@ -119,7 +160,7 @@ function writeSnapshot(view, html) {
 function clearLocalCaches() {
   try {
     Object.keys(localStorage)
-      .filter(k => k === CACHE_KEYS.shop || k === CACHE_KEYS.settings || k.startsWith(CACHE_KEYS.snapPrefix))
+      .filter(k => k === CACHE_KEYS.shop || k === CACHE_KEYS.settings || k.startsWith(CACHE_KEYS.snapPrefix) || k.startsWith("denquva_prod_"))
       .forEach(k => localStorage.removeItem(k));
   } catch {}
 }
@@ -231,6 +272,8 @@ async function apiJson(res) {
   if (!res.ok) {
     const err = new Error(data.error || `Request failed (${res.status})`);
     err.status = res.status;
+    err.code = data.code;
+    err.data = data;
     throw err;
   }
   return data;
@@ -241,15 +284,27 @@ async function apiJson(res) {
 // false once your Worker is live, and nothing else needs to change.
 
 const Api = {
-  async getProducts(search = "") {
+  async getProducts(search = "", opts = {}) {
     if (USE_SAMPLE_DATA) {
       const term = search.toLowerCase();
       return sampleProducts.filter(p =>
         !term || p.name.toLowerCase().includes(term) || p.sku.toLowerCase().includes(term) || p.category.toLowerCase().includes(term)
       );
     }
-    const res = await authFetch(`${API_BASE}/api/products?search=${encodeURIComponent(search)}`);
-    return apiJson(res);
+    try {
+      const res = await authFetch(`${API_BASE}/api/products?search=${encodeURIComponent(search)}${opts.archived ? "&archived=1" : ""}`);
+      const data = await apiJson(res);
+      if (!search && !opts.archived) xCacheProducts(data);
+      return data;
+    } catch (err) {
+      // No network: sell from the last saved product list.
+      const cached = !opts.archived && typeof xIsNetworkError === "function" && xIsNetworkError(err) ? xReadProductCache() : null;
+      if (cached) {
+        const t = search.toLowerCase();
+        return t ? cached.filter(p => `${p.name} ${p.sku || ""} ${p.category || ""}`.toLowerCase().includes(t)) : cached;
+      }
+      throw err;
+    }
   },
 
   async createProduct(data) {
@@ -310,7 +365,7 @@ const Api = {
   // Records a whole cart of products as one checkout. One item failing
   // (out of stock, etc) never blocks the rest, mirrored here in sample
   // mode exactly as the backend batch endpoint behaves for real.
-  async sellBatch(items) {
+  async sellBatch(items, opts = {}) {
     if (USE_SAMPLE_DATA) {
       const succeeded = [];
       const failed = [];
@@ -334,8 +389,17 @@ const Api = {
       }
       return { succeeded, failed, total_amount: totalAmount, total_profit: totalProfit };
     }
+    const headers = { "Content-Type": "application/json", "X-Payment-Method": opts.method || "cash" };
+    if (opts.ref) headers["X-Client-Ref"] = opts.ref;
+    if (opts.clientTime) headers["X-Client-Time"] = opts.clientTime;
+    let signal;
+    if (opts.timeoutMs && typeof AbortController !== "undefined") {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), opts.timeoutMs);
+      signal = ctrl.signal;
+    }
     const res = await authFetch(`${API_BASE}/api/sales/batch`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers, signal,
       body: JSON.stringify({ items }),
     });
     return apiJson(res);
@@ -404,7 +468,7 @@ const Api = {
     return apiJson(res);
   },
 
-  async createCreditSale(data) {
+  async createCreditSale(data, opts = {}) {
     if (USE_SAMPLE_DATA) {
       let subtotal = 0;
       const items = [];
@@ -427,12 +491,12 @@ const Api = {
       return record;
     }
     const res = await authFetch(`${API_BASE}/api/credit-sales`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+      method: "POST", headers: { "Content-Type": "application/json", ...(opts.override ? { "X-Override-Limit": "1" } : {}) }, body: JSON.stringify(data),
     });
     return apiJson(res);
   },
 
-  async markCreditSalesPaid(ids) {
+  async markCreditSalesPaid(ids, method = "cash") {
     if (USE_SAMPLE_DATA) {
       const updated = [];
       for (const id of ids) {
@@ -457,7 +521,7 @@ const Api = {
       return { updated, skipped: [] };
     }
     const res = await authFetch(`${API_BASE}/api/credit-sales/mark-paid`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }),
+      method: "PATCH", headers: { "Content-Type": "application/json", "X-Payment-Method": method }, body: JSON.stringify({ ids }),
     });
     return apiJson(res);
   },
@@ -740,7 +804,7 @@ const NAV_ICON_SVG = {
   settings: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
 };
 
-const NAV_ITEMS = [
+const NAV_ALL = [
   { id: "dashboard", label: "Dashboard", icon: NAV_ICON_SVG.dashboard, hint: "Today's sales, revenue, and low stock at a glance" },
   { id: "products", label: "Products", icon: NAV_ICON_SVG.products, hint: "Add, edit, sell, and restock your products" },
   { id: "sales", label: "Sales", icon: NAV_ICON_SVG.sales, hint: "Your sales history and estimated profit" },
@@ -749,6 +813,14 @@ const NAV_ITEMS = [
   { id: "ai", label: "AI Assistant", icon: NAV_ICON_SVG.ai, hint: "Ask questions about your business, by typing or speaking", short: "AI" },
   { id: "settings", label: "Settings", icon: NAV_ICON_SVG.settings, hint: "Shop name, logo, currency, password, and subscription" },
 ];
+
+// Staff see fewer pages. The server enforces this too.
+const STAFF_VIEWS = ["dashboard", "products", "sales", "credit", "settings"];
+let NAV_ITEMS = NAV_ALL;
+function xApplyRole() {
+  NAV_ITEMS = isStaff() ? NAV_ALL.filter(i => STAFF_VIEWS.includes(i.id)) : NAV_ALL;
+  if (!NAV_ITEMS.some(i => i.id === currentView)) currentView = "dashboard";
+}
 
 let currentView = "dashboard";
 
@@ -965,7 +1037,8 @@ async function render() {
         if (err.status === 401) { logout({ expired: true }); return; }
       }
     }
-    if (!isSessionUsable(currentShop)) {
+    window.xReadOnly = !isSessionUsable(currentShop) && xInGrace(currentShop);
+    if (!isSessionUsable(currentShop) && !window.xReadOnly) {
       hideNav();
       const html = await ViewPaymentPending();
       if (stale()) return;
@@ -978,6 +1051,7 @@ async function render() {
     maybeRefreshTrialStatus();
   }
 
+  xApplyRole();
   showNav();
   renderNav();
   const view = currentView;
@@ -1175,6 +1249,8 @@ function ViewLanding() {
 async function ViewAuth() {
   if (authMode === "forgot") return ViewForgotPassword();
   if (authMode === "landing") return ViewLanding();
+  if (authMode === "staff") return xViewStaffLogin();
+  if (authMode === "recover") return xViewRecover();
   const signup = authMode === "signup";
   return `
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
@@ -1205,6 +1281,7 @@ async function ViewAuth() {
           ${signup ? "Create account" : "Log in"}
         </button>
         ${!signup ? `<button onclick="goAuth('forgot')" class="w-full text-xs text-primary underline text-center">Forgot your password?</button>` : ""}
+        ${!signup ? `<button onclick="goAuth('staff')" class="w-full text-xs text-ink/60 underline text-center">Staff login</button>` : ""}
       </div>
       <p class="text-xs text-ink/40 text-center mt-4">${signup ? "Free for 7 days, no card needed to start." : ""}</p>
       <button onclick="goAuth('landing')" class="block mx-auto mt-2 text-xs text-ink/50 underline">What is Denquva?</button>
@@ -1228,6 +1305,7 @@ function ViewForgotPassword() {
           <input id="forgot-email" type="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5"
             onkeydown="if(event.key==='Enter') submitForgotEmail()" />
           <button id="forgot-submit-btn" onclick="submitForgotEmail()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Continue</button>
+          <button onclick="goAuth('recover')" class="w-full text-xs text-primary underline text-center">I have a recovery code instead</button>
         ` : `
           <p class="text-sm font-medium">${forgotQuestion}</p>
           <input id="forgot-answer" placeholder="Your answer" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
@@ -1374,6 +1452,8 @@ async function ViewPaymentPending() {
       <p class="text-sm text-ink/50 mb-5">${message}</p>
       <button onclick="resumePaymentFlow()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mb-3">Continue to payment</button>
       <button onclick="refreshSession()" class="w-full border border-black/10 py-2.5 rounded-xl font-semibold mb-3">I already paid, refresh</button>
+      <button onclick="xDownloadBackup()" class="w-full border border-black/10 py-2.5 rounded-xl font-semibold mb-3">Download my data</button>
+      <button onclick="xOpenSupport()" class="w-full border border-black/10 py-2.5 rounded-xl font-semibold mb-3">Contact support</button>
       <button onclick="logout()" class="text-xs text-ink/40 underline">Log out</button>
       <button onclick="openDeleteAccount()" class="block mx-auto mt-4 text-xs text-danger underline">Delete account</button>
     </div>
@@ -1446,6 +1526,15 @@ async function cancelSubscriptionFlow() {
 }
 
 function trialBannerHtml() {
+  if (isStaff()) return "";
+  if (window.xReadOnly && currentShop) {
+    const left = Math.max(0, Math.ceil((xLapsedAt(currentShop) + GRACE_DAYS * 86400000 - Date.now()) / 86400000));
+    return `
+    <div class="bg-danger-light text-danger text-sm font-semibold rounded-xl px-4 py-2.5 mb-4">
+      <div>Your subscription has ended. Denquva is read only for ${left} more day${left === 1 ? "" : "s"}.</div>
+      <div class="flex gap-4 mt-1"><button onclick="resumePaymentFlow()" class="underline">Subscribe</button><button onclick="xDownloadBackup()" class="underline">Download my data</button></div>
+    </div>`;
+  }
   if (USE_SAMPLE_DATA || !currentShop || currentShop.subscription_status !== "trial" || !currentShop.trial_ends_at) return "";
   const daysLeft = Math.max(0, Math.ceil((new Date(currentShop.trial_ends_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
   return `
@@ -1519,12 +1608,14 @@ async function ViewDashboard() {
 
 let productSearchTerm = "";
 
+let productShowArchived = false;
 async function ViewProducts() {
-  const products = await Api.getProducts(productSearchTerm);
+  if (isStaff()) productShowArchived = false;
+  const products = await Api.getProducts(productSearchTerm, { archived: productShowArchived });
   cachedProducts = products;
   const cards = products.length
-    ? products.map(productCard).join("")
-    : `<div class="text-center py-16 text-ink/40">No products yet. Add your first one.</div>`;
+    ? products.map(p => productCard(p, productShowArchived)).join("")
+    : `<div class="text-center py-16 text-ink/40">${productShowArchived ? "No archived products." : "No products yet. Add your first one."}</div>`;
 
   return `
     <div class="flex items-center justify-between mb-4 gap-3">
@@ -1533,8 +1624,13 @@ async function ViewProducts() {
         value="${productSearchTerm}"
         oninput="productSearchTerm = this.value; render()"
         class="flex-1 md:flex-none md:w-64 bg-surface border border-black/10 rounded-full px-4 py-2.5 text-sm" />
-      <button onclick="openProductForm()" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full text-sm whitespace-nowrap">+ Add</button>
+      ${isStaff() ? "" : `<button onclick="openProductForm()" class="bg-primary text-white font-semibold px-4 py-2.5 rounded-full text-sm whitespace-nowrap">+ Add</button>`}
     </div>
+    ${productShowArchived ? `<div class="bg-amber-light text-amber-dark text-sm font-semibold rounded-xl px-4 py-2.5 mb-3 flex items-center justify-between"><span>Archived products. Their sales history is kept.</span><button onclick="xToggleArchived()" class="underline">Back</button></div>` : `
+    <div class="flex justify-end flex-wrap gap-2 mb-3">
+      <button onclick="xOpenStocktake()" class="bg-black/5 font-semibold px-4 py-2 rounded-full text-sm">Stocktake</button>
+      ${isStaff() ? "" : `<button onclick="xToggleArchived()" class="bg-black/5 font-semibold px-4 py-2 rounded-full text-sm">Archived</button>`}
+    </div>`}
     <div class="flex justify-end gap-2 mb-3">
       <button onclick="posOpenLabels()" class="bg-primary-light text-primary-dark font-semibold px-4 py-2 rounded-full text-sm">Barcode labels</button>
       <button onclick="openMultiSaleModal()" class="bg-amber text-white font-semibold px-4 py-2 rounded-full text-sm flex items-center gap-1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>Multi Sale</button>
@@ -1543,19 +1639,19 @@ async function ViewProducts() {
   `;
 }
 
-function productCard(p) {
+function productCard(p, archivedView = false) {
   const isLow = p.quantity <= p.low_stock_threshold;
   const thumb = p.image_url
     ? `<div class="product-thumb bg-cover bg-center" style="background-image:url('${p.image_url}')"></div>`
     : `<div class="product-thumb bg-black/5 flex items-center justify-center text-ink/30"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></div>`;
   return `
     <div class="relative overflow-hidden rounded-2xl">
-      <div class="absolute inset-0 bg-danger flex items-center justify-between px-6 text-white font-semibold rounded-2xl" aria-hidden="true">
-        <span>Delete</span><span>Delete</span>
-      </div>
+      ${isStaff() || archivedView ? "" : `<div class="absolute inset-0 bg-danger flex items-center justify-between px-6 text-white font-semibold rounded-2xl" aria-hidden="true">
+        <span>Remove</span><span>Remove</span>
+      </div>`}
       <div class="card product-card p-3 flex flex-col gap-2 relative bg-surface h-full"
         style="touch-action: pan-y;"
-        ontouchstart="swipeStart(event, ${p.id})"
+        ontouchstart="${isStaff() || archivedView ? "" : `swipeStart(event, ${p.id})`}"
         ontouchmove="swipeMove(event, ${p.id})"
         ontouchend="swipeEnd(event, ${p.id})"
         ontouchcancel="swipeCancel()">
@@ -1570,14 +1666,17 @@ function productCard(p) {
           <div class="font-semibold text-sm">${formatMoney(p.selling_price)}</div>
           <div class="text-xs text-right ${isLow ? "text-danger font-semibold" : "text-ink/45"}">${p.quantity} left${isLow ? " · LOW" : ""}</div>
         </div>
-        <div class="grid grid-cols-2 gap-1.5 mt-auto">
+        ${archivedView ? "" : `<div class="grid grid-cols-2 gap-1.5 mt-auto">
           <button onclick="openSellModal(${p.id})" title="Record a sale, reduces stock automatically" class="bg-primary text-white font-semibold py-2 rounded-xl text-xs whitespace-nowrap">SELL</button>
           <button onclick="openStockModal(${p.id})" title="Restock this product and log the movement" class="bg-amber-light text-amber-dark font-semibold py-2 rounded-xl text-xs whitespace-nowrap">ADD STOCK</button>
-        </div>
-        <div class="flex gap-3 text-xs text-ink/45">
-          <button onclick="openProductForm(${p.id})" class="underline">Edit</button>
-          <button onclick="confirmDeleteProduct(${p.id})" class="underline">Delete</button>
-        </div>
+        </div>`}
+        ${archivedView
+          ? `<div class="flex gap-3 text-xs text-ink/45 mt-auto"><button onclick="xRestoreProduct(${p.id})" class="underline font-semibold text-primary">Restore</button></div>`
+          : `<div class="flex gap-3 text-xs text-ink/45">
+          ${isStaff() ? "" : `<button onclick="openProductForm(${p.id})" class="underline">Edit</button>`}
+          <button onclick="xOpenAdjust(${p.id})" class="underline">Adjust</button>
+          ${isStaff() ? "" : `<button onclick="confirmDeleteProduct(${p.id})" class="underline">Remove</button>`}
+        </div>`}
       </div>
     </div>`;
 }
@@ -1753,7 +1852,8 @@ async function saveProduct(id) {
 
 async function deleteProductNow(id) {
   try {
-    await Api.deleteProduct(id);
+    const r = await Api.deleteProduct(id);
+    toast(r && r.archived ? "Archived. Sales history is kept." : "Product removed");
     render();
   } catch (err) {
     toast(err.message);
@@ -1761,10 +1861,10 @@ async function deleteProductNow(id) {
 }
 
 async function confirmDeleteProduct(id) {
-  if (!confirm("Delete this product? This cannot be undone.")) return;
+  if (!confirm("Remove this product? If it has sales, it is archived and its history is kept. You can restore it any time.")) return;
   try {
-    await Api.deleteProduct(id);
-    toast("Product deleted");
+    const r = await Api.deleteProduct(id);
+    toast(r && r.archived ? "Archived. Sales history is kept." : "Product removed");
     render();
   } catch (err) {
     toast(err.message);
@@ -1976,12 +2076,14 @@ async function confirmMultiSale() {
   if (multiSaleCart.size === 0) return;
   const items = [...multiSaleCart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
   const snapshot = typeof posCartSnapshot === "function" ? posCartSnapshot() : null;
+  const ref = typeof xNewRef === "function" ? xNewRef() : "";
 
   const btn = document.querySelector('#multisale-modal-body button[onclick="posOpenCharge()"]');
   if (btn) { btn.disabled = true; btn.textContent = "Selling…"; }
 
   try {
-    const result = await Api.sellBatch(items);
+    // A cash sale never waits on a bad connection: after 20 seconds it is saved on the phone and synced later.
+    const result = await Api.sellBatch(items, { method: "cash", ref, timeoutMs: 20000 });
     closeModal("multisale-modal");
 
     if (result.failed && result.failed.length) {
@@ -1995,6 +2097,10 @@ async function confirmMultiSale() {
     multiSaleCart = new Map();
     render();
   } catch (err) {
+    if (!USE_SAMPLE_DATA && ref && typeof xIsNetworkError === "function" && xIsNetworkError(err)) {
+      xOfflineCashSale(ref, items, snapshot);
+      return;
+    }
     toast(err.message || "Could not complete the sale");
     renderMultiSaleModal();
   }
@@ -2011,6 +2117,7 @@ function openStockModal(productId) {
       <input id="as-qty" type="number" placeholder="Quantity to add" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
       <input id="as-cost" type="number" placeholder="Cost per unit (optional)" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
       <input id="as-supplier" placeholder="Supplier (optional)" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+      ${isStaff() ? "" : `<label class="flex items-start gap-2 text-sm cursor-pointer"><input id="as-owe" type="checkbox" style="width:18px;height:18px;flex:none;margin-top:1px;accent-color:#0F6B4C" /><span>I have not paid the supplier yet. Add it to Debts.</span></label>`}
     </div>
     <div class="flex gap-2 mt-5">
       <button onclick="closeModal('stock-modal')" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
@@ -2026,7 +2133,14 @@ async function confirmAddStock(productId) {
   const cost = parseFloat(document.getElementById("as-cost").value) || 0;
   const supplier = document.getElementById("as-supplier").value.trim();
   try {
+    const owe = document.getElementById("as-owe");
+    if (owe && owe.checked && (!supplier || !(cost > 0))) { toast("To add it to Debts, enter the supplier and the cost per unit"); return; }
     const result = await Api.addStock(productId, qty, cost, supplier, "");
+    if (owe && owe.checked) {
+      const p = cachedProducts.find(x => x.id === productId);
+      try { await Api.createDebt({ creditor_name: supplier, amount: qty * cost, note: `${qty} x ${p ? p.name : "stock"}`, debt_date: localDateStr(), due_date: null }); }
+      catch (e) { toast("Stock added, but the debt was not saved: " + e.message); }
+    }
     closeModal("stock-modal");
     toast(`Stock updated. New stock: ${result.new_quantity}`);
     render();
@@ -2096,10 +2210,15 @@ let salesRange = "today";
 
 async function ViewSales() {
   if (salesRange === "reversed") return ViewReversedSales();
+  if (salesRange === "expenses" && !isStaff()) return xViewExpenses();
+  if (salesRange === "eod") return xViewEod();
   const sales = await Api.getSales(salesRange);
   lastRenderedSales = sales;
+  const staff = isStaff();
   const totalRevenue = sales.reduce((a, s) => a + s.total_amount, 0);
-  const totalProfit = sales.reduce((a, s) => a + s.estimated_profit, 0);
+  const totalProfit = staff ? 0 : sales.reduce((a, s) => a + (s.estimated_profit || 0), 0);
+  let expenses = 0;
+  if (!staff && !USE_SAMPLE_DATA) { try { expenses = (await XApi.summary(salesRange)).expenses || 0; } catch {} }
 
   const tabs = salesTabsHtml();
 
@@ -2112,7 +2231,7 @@ async function ViewSales() {
           </div>
           <div class="text-right">
             <div class="font-semibold">${formatMoney(s.total_amount)}</div>
-            <div class="text-xs text-primary">+${formatMoney(s.estimated_profit)} profit</div>
+            ${staff ? "" : `<div class="text-xs text-primary">+${formatMoney(s.estimated_profit)} profit</div>`}
           </div>
         </div>`).join("")
     : `<div class="text-center py-12 text-ink/40">No sales in this range.</div>`;
@@ -2122,14 +2241,20 @@ async function ViewSales() {
     <div class="flex gap-2 mb-4 flex-wrap">${tabs}</div>
     <div class="grid grid-cols-2 gap-3 mb-4">
       <div class="stat-card"><div class="text-xs text-ink/50">Revenue</div><div class="font-display text-xl font-extrabold">${formatMoney(totalRevenue)}</div></div>
-      <div class="stat-card"><div class="text-xs text-ink/50">Estimated profit</div><div class="font-display text-xl font-extrabold">${formatMoney(totalProfit)}</div></div>
+      ${staff
+        ? `<div class="stat-card"><div class="text-xs text-ink/50">Items sold</div><div class="font-display text-xl font-extrabold">${sales.reduce((a, s) => a + s.quantity, 0)}</div></div>`
+        : `<div class="stat-card"><div class="text-xs text-ink/50">Estimated profit</div><div class="font-display text-xl font-extrabold">${formatMoney(totalProfit)}</div></div>`}
+      ${expenses > 0 ? `
+      <div class="stat-card"><div class="text-xs text-ink/50">Expenses</div><div class="font-display text-xl font-extrabold text-danger">${formatMoney(expenses)}</div></div>
+      <div class="stat-card"><div class="text-xs text-ink/50">Net profit</div><div class="font-display text-xl font-extrabold ${totalProfit - expenses < 0 ? "text-danger" : ""}">${formatMoney(totalProfit - expenses)}</div></div>` : ""}
     </div>
     <div class="card p-4">${rows}</div>
   `;
 }
 
 function salesTabsHtml() {
-  const ranges = [["today", "Today"], ["week", "This week"], ["month", "This month"], ["all", "All"], ["reversed", "Reversed"]];
+  const ranges = [["today", "Today"], ["week", "This week"], ["month", "This month"], ["all", "All"], ["reversed", "Reversed"], ["eod", "End of day"]];
+  if (!isStaff()) ranges.push(["expenses", "Expenses"]);
   return ranges.map(([key, label]) => `
     <button onclick="salesRange='${key}'; render()" class="px-3 py-1.5 rounded-full text-sm font-medium ${salesRange === key ? "bg-primary text-white" : "bg-surface border border-black/10"}">${label}</button>
   `).join("");
@@ -2190,9 +2315,9 @@ function openSaleDetail(saleId) {
       <div class="flex justify-between"><span class="text-ink/50">Product</span><span class="font-semibold text-right">${s.product_name}</span></div>
       <div class="flex justify-between"><span class="text-ink/50">Quantity</span><span class="font-semibold">${s.quantity}</span></div>
       <div class="flex justify-between"><span class="text-ink/50">Unit price</span><span class="font-semibold">${formatMoney(s.unit_price)}</span></div>
-      <div class="flex justify-between"><span class="text-ink/50">Unit cost</span><span class="font-semibold">${formatMoney(s.unit_cost)}</span></div>
+      ${isStaff() ? "" : `<div class="flex justify-between"><span class="text-ink/50">Unit cost</span><span class="font-semibold">${formatMoney(s.unit_cost)}</span></div>`}
       <div class="flex justify-between border-t border-black/10 pt-3"><span class="text-ink/50">Total amount</span><span class="font-bold">${formatMoney(s.total_amount)}</span></div>
-      <div class="flex justify-between"><span class="text-ink/50">Estimated profit</span><span class="font-semibold text-primary">${formatMoney(s.estimated_profit)}</span></div>
+      ${isStaff() ? "" : `<div class="flex justify-between"><span class="text-ink/50">Estimated profit</span><span class="font-semibold text-primary">${formatMoney(s.estimated_profit)}</span></div>`}
       <div class="flex justify-between border-t border-black/10 pt-3"><span class="text-ink/50">Date & time</span><span class="font-semibold text-right">${new Date(s.sold_at).toLocaleString()}</span></div>
     </div>
     <button onclick="openReverseSheetById(${s.id})" class="w-full mt-5 py-2.5 rounded-xl bg-danger-light text-danger font-semibold">Reverse this sale</button>
@@ -2242,7 +2367,7 @@ async function ViewCredit() {
       </div>
       <div class="text-right flex-shrink-0">
         <div class="font-semibold">${formatMoney(s.total_price)}</div>
-        ${s.status === "pending" ? `<div class="text-xs text-danger">${formatMoney(s.outstanding_amount)} owed</div>` : `<div class="text-xs text-primary">Settled</div>`}
+        ${s.status === "pending" ? `<div class="text-xs text-danger">${formatMoney(s.outstanding_amount)} owed${(s.paid_so_far || 0) > 0 ? ` · ${formatMoney(s.paid_so_far)} paid` : ""}</div>` : `<div class="text-xs text-primary">Settled</div>`}
       </div>
     </div>`;
   }).join("") : `<div class="text-center py-12 text-ink/40">No credit sales${creditSearchTerm ? ` matching "${creditSearchTerm}"` : ""}.</div>`;
@@ -2289,52 +2414,21 @@ function toggleCreditSelect(id, checked) {
 async function markSelectedCreditPaid() {
   if (creditSelected.size === 0) return;
   const ids = [...creditSelected];
-  try {
-    const result = await Api.markCreditSalesPaid(ids);
-    toast(`Marked ${result.updated.length} as paid${result.skipped.length ? `, ${result.skipped.length} skipped` : ""}`);
-    creditSelected = new Set();
-    render();
-  } catch (err) {
-    toast(err.message || "Could not update those credit sales");
-  }
+  xAskPayMethod("How did the customer pay the full balance?", async (method) => {
+    try {
+      const result = await Api.markCreditSalesPaid(ids, method);
+      toast(`Marked ${result.updated.length} as paid${result.skipped.length ? `, ${result.skipped.length} skipped` : ""}`);
+      creditSelected = new Set();
+      render();
+    } catch (err) {
+      toast(err.message || "Could not update those credit sales");
+    }
+  });
 }
 
 // ---- Credit sale detail modal ----
 function openCreditDetail(creditSaleId) {
-  const s = lastRenderedCreditSales.find(s => s.id === creditSaleId);
-  if (!s) return;
-
-  const itemsHtml = (s.items || []).map(i => `
-    <div class="flex justify-between py-1.5 border-b border-black/5 last:border-0 text-sm">
-      <span>${i.product_name} <span class="text-ink/40">x${i.quantity}</span></span>
-      <span class="font-medium">${formatMoney(i.line_total)}</span>
-    </div>`).join("");
-  const subtotal = s.total_price + s.discount;
-
-  document.getElementById("credit-detail-modal-body").innerHTML = `
-    <div class="flex items-center justify-between mb-1">
-      <h2 class="font-display text-xl font-extrabold">${s.customer_name}</h2>
-      <button onclick="closeModal('credit-detail-modal')" class="text-ink/40 text-xl leading-none">✕</button>
-    </div>
-    <span class="inline-block text-xs font-semibold px-2 py-0.5 rounded-full mb-4 ${s.status === "paid" ? "bg-primary-light text-primary-dark" : "bg-amber-light text-amber-dark"}">${s.status === "paid" ? "Paid" : "Pending"}</span>
-
-    <div class="mb-4">
-      <div class="text-xs font-semibold text-ink/45 mb-1">Items</div>
-      ${itemsHtml || `<div class="text-sm text-ink/40">No items on record</div>`}
-    </div>
-
-    <div class="space-y-2 text-sm border-t border-black/10 pt-3">
-      <div class="flex justify-between"><span class="text-ink/50">Subtotal</span><span class="font-semibold">${formatMoney(subtotal)}</span></div>
-      ${s.discount > 0 ? `<div class="flex justify-between"><span class="text-ink/50">Discount</span><span class="font-semibold text-danger">−${formatMoney(s.discount)}</span></div>` : ""}
-      <div class="flex justify-between"><span class="text-ink/50">Total price</span><span class="font-bold">${formatMoney(s.total_price)}</span></div>
-      <div class="flex justify-between"><span class="text-ink/50">Outstanding</span><span class="font-semibold ${s.status === "pending" ? "text-danger" : "text-primary"}">${s.status === "pending" ? formatMoney(s.outstanding_amount) : "Settled"}</span></div>
-      <div class="flex justify-between border-t border-black/10 pt-3"><span class="text-ink/50">Purchase date</span><span class="font-semibold text-right">${new Date(s.purchase_date).toLocaleString()}</span></div>
-      ${s.paid_at ? `<div class="flex justify-between"><span class="text-ink/50">Paid on</span><span class="font-semibold text-right">${new Date(s.paid_at).toLocaleString()}</span></div>` : ""}
-    </div>
-
-    <button onclick="closeModal('credit-detail-modal')" class="w-full mt-5 py-2.5 rounded-xl border border-black/10 font-semibold">Close</button>
-  `;
-  document.getElementById("credit-detail-modal").classList.remove("hidden");
+  xOpenCreditDetail(creditSaleId);
 }
 
 // ---- New Credit Sale modal ----
@@ -2347,12 +2441,15 @@ let creditSaleProducts = [];
 let creditSaleSearchTerm = "";
 let creditSaleCustomerName = "";
 let creditSaleDiscount = 0;
+let creditSalePhone = "";
 
 async function openCreditSaleModal() {
   creditSaleCart = new Map();
   creditSaleSearchTerm = "";
   creditSaleCustomerName = "";
+  creditSalePhone = "";
   creditSaleDiscount = 0;
+  if (typeof xLoadCustomers === "function") await xLoadCustomers();
   try {
     creditSaleProducts = await Api.getProducts("");
   } catch (err) {
@@ -2421,8 +2518,12 @@ function renderCreditSaleModal() {
   setHtmlKeepingFocus(document.getElementById("creditsale-modal-body"), `
     <h2 class="font-display text-xl font-extrabold mb-3">New Credit Sale</h2>
 
-    <input id="creditsale-customer" type="text" placeholder="Customer name" value="${creditSaleCustomerName}"
-      oninput="creditSaleCustomerName = this.value"
+    <input id="creditsale-customer" type="text" placeholder="Customer name" value="${creditSaleCustomerName}" list="x-cust-list" autocomplete="off"
+      oninput="creditSaleCustomerName = this.value; xFillPhone()"
+      class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
+    ${typeof xCustomerListHtml === "function" ? xCustomerListHtml() : ""}
+    <input id="creditsale-phone" type="tel" inputmode="tel" placeholder="Customer phone (for reminders)" value="${creditSalePhone}"
+      oninput="creditSalePhone = this.value"
       class="w-full border border-black/10 rounded-xl px-3 py-2.5 mb-2" />
 
     <input id="creditsale-search" type="text" placeholder="Search products to add"
@@ -2490,8 +2591,15 @@ async function confirmCreditSale() {
 
   const items = [...creditSaleCart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
 
+  const payload = { customer_name: customerName, customer_phone: creditSalePhone.trim(), items, discount: Number(creditSaleDiscount) || 0 };
   try {
-    await Api.createCreditSale({ customer_name: customerName, items, discount: Number(creditSaleDiscount) || 0 });
+    try {
+      await Api.createCreditSale(payload);
+    } catch (err) {
+      // Over the customer's credit limit: the owner can allow it.
+      if (err.code === "credit_limit" && confirm(`${err.message}\n\nAllow this credit sale anyway?`)) await Api.createCreditSale(payload, { override: true });
+      else throw err;
+    }
     closeModal("creditsale-modal");
     toast(`Credit sale recorded for ${customerName}`);
     render();
@@ -3177,6 +3285,8 @@ function blobToBase64(blob) {
 // ---------------- SETTINGS VIEW ----------------
 
 async function ViewSettings() {
+  if (isStaff()) return xStaffSettingsHtml();
+  const xData = USE_SAMPLE_DATA ? null : await xLoadOwnerData();
   const s = USE_SAMPLE_DATA ? sampleSettings : await Api.getSettings();
   shopSettings = s;
   originalLogo = s.logo_url || "";
@@ -3274,6 +3384,8 @@ async function ViewSettings() {
       <div id="smart-import-review"></div>
     </div>
     ` : ""}
+
+    ${!USE_SAMPLE_DATA ? xOwnerCardsHtml(xData) : ""}
 
     ${!USE_SAMPLE_DATA ? `
     ${subscriptionCardHtml()}
