@@ -808,6 +808,7 @@ const NAV_ALL = [
   { id: "dashboard", label: "Dashboard", icon: NAV_ICON_SVG.dashboard, hint: "Today's sales, revenue, and low stock at a glance", short: "Home" },
   { id: "products", label: "Products", icon: NAV_ICON_SVG.products, hint: "Add, edit, sell, and restock your products" },
   { id: "sales", label: "Sales", icon: NAV_ICON_SVG.sales, hint: "Your sales history and estimated profit" },
+  { id: "delivery", label: "Deliveries", icon: NAV_ICON_SVG.sales, hint: "Manage customer delivery requests and live tracking", short: "Delivery" },
   { id: "credit", label: "Credit Sales", icon: NAV_ICON_SVG.credit, hint: "Products given on credit, and who still owes you", short: "Credit" },
   { id: "debts", label: "Debts", icon: NAV_ICON_SVG.debts, hint: "People and suppliers you owe, with payments recorded" },
   { id: "ai", label: "AI Assistant", icon: NAV_ICON_SVG.ai, hint: "Ask questions about your business, by typing or speaking", short: "AI" },
@@ -815,7 +816,7 @@ const NAV_ALL = [
 ];
 
 // Staff see fewer pages. The server enforces this too.
-const STAFF_VIEWS = ["dashboard", "products", "sales", "credit", "settings"];
+const STAFF_VIEWS = ["dashboard", "products", "sales", "delivery", "credit", "settings"];
 let NAV_ITEMS = NAV_ALL;
 function xApplyRole() {
   NAV_ITEMS = isStaff() ? NAV_ALL.filter(i => STAFF_VIEWS.includes(i.id)) : NAV_ALL;
@@ -1094,6 +1095,7 @@ async function render() {
     if (view === "dashboard") html = await ViewDashboard();
     if (view === "products") html = await ViewProducts();
     if (view === "sales") html = await ViewSales();
+    if (view === "delivery") html = await ViewDelivery();
     if (view === "credit") html = await ViewCredit();
     if (view === "debts") html = await ViewDebts();
     if (view === "ai") html = await ViewAI();

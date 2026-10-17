@@ -1,4 +1,4 @@
-const CACHE_NAME = "denquva-shell-v30";
+const CACHE_NAME = "denquva-shell-v31";
 const RUNTIME_CACHE = "denquva-runtime-v5";
 const SHELL_FILES = [
   "./",
@@ -9,6 +9,9 @@ const SHELL_FILES = [
   "./js/pos.js",
   "./js/reverse.js",
   "./js/extras.js",
+  "./js/delivery.js",
+  "./delivery.html",
+  "./js/delivery-public.js",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -95,7 +98,8 @@ self.addEventListener("fetch", (event) => {
   if (!sameOrigin && !RUNTIME_HOSTS.includes(url.hostname)) return; // API and everything else goes straight to network
 
   if (request.mode === "navigate") {
-    event.respondWith(staleWhileRevalidate(event, CACHE_NAME, "./index.html", "./index.html"));
+    const page = url.pathname.endsWith("/delivery.html") ? "./delivery.html" : "./index.html";
+    event.respondWith(staleWhileRevalidate(event, CACHE_NAME, page, page));
     return;
   }
   event.respondWith(
