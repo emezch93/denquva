@@ -1,3 +1,11 @@
+// ============================================================================
+// Denquva extras: staff logins, owner approval, stock adjustment and stocktake,
+// archive and restore, expenses, End of Day, part payments on credit, offline
+// selling queue, activity log, backup and support.
+// Loads after app.js, pos.js and reverse.js. Needs the server add-on
+// (worker-extras.js). If the add-on is missing, the screens say so.
+// ============================================================================
+
 const X_SUPPORT = { wa1: "2348185947780", wa2: "2348169142002", email: "denquva@gmail.com" };
 const X_REASONS = ["Damaged", "Expired", "Stolen or missing", "Counting mistake", "Used in the shop", "Stocktake count", "Other"];
 const X_EXP_CATS = ["Rent", "Transport", "Electricity", "Salary", "Packaging", "Airtime and data", "Maintenance", "Other"];
@@ -38,6 +46,39 @@ function xDigits(phone) {
   return d;
 }
 
+// ---------------- show or hide PINs ----------------
+function xPinField(id, placeholder, opts = {}) {
+  const big = opts.center ? "text-center text-xl tracking-widest" : "";
+  return `<div style="position:relative"><input id="${id}" type="password" inputmode="${opts.numeric === false ? "text" : "numeric"}" ${opts.numeric === false ? "" : 'maxlength="6"'} placeholder="${placeholder}" autocomplete="off" ${opts.extra || ""} class="w-full border border-black/10 rounded-xl px-3 py-2.5 ${big}" style="padding-right:4.2rem" /><button type="button" onclick="xTogglePin('${id}', this)" style="position:absolute;right:12px;top:50%;transform:translateY(-50%)" class="text-xs font-semibold text-primary">Show</button></div>`;
+}
+function xTogglePin(id, btn) {
+  const i = document.getElementById(id);
+  if (!i) return;
+  const show = i.type === "password";
+  i.type = show ? "text" : "password";
+  btn.textContent = show ? "Hide" : "Show";
+}
+let xSecretCb = null;
+function xSecretSheet({ title, note, placeholder, numeric = true, cta = "Save", onSubmit }) {
+  xSecretCb = onSubmit;
+  posOpenSheet(`
+    <h2 class="font-display text-xl font-extrabold mb-1">${escapeHtml(title)}</h2>
+    ${note ? `<p class="text-sm text-ink/50 mb-3">${escapeHtml(note)}</p>` : ""}
+    ${xPinField("x-secret", placeholder, { center: numeric, numeric, extra: `onkeydown="if(event.key==='Enter') xSecretGo()"` })}
+    <div class="flex gap-2 mt-4">
+      <button onclick="xSecretCb = null; posCloseSheet()" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
+      <button id="x-secret-go" onclick="xSecretGo()" class="flex-1 py-2.5 rounded-xl bg-primary text-white font-semibold">${escapeHtml(cta)}</button>
+    </div>`);
+  setTimeout(() => { const i = document.getElementById("x-secret"); if (i) i.focus(); }, 60);
+}
+async function xSecretGo() {
+  const v = document.getElementById("x-secret").value.trim();
+  if (!v || !xSecretCb) return;
+  const btn = document.getElementById("x-secret-go"); btn.disabled = true;
+  try { const ok = await xSecretCb(v); if (ok !== false) posCloseSheet(); else btn.disabled = false; }
+  catch (e) { btn.disabled = false; toast(xNeedServer(e)); }
+}
+
 // ---------------- owner approval for staff ----------------
 let xApprovalWaiter = null;
 function xHandleApproval(message) {
@@ -47,7 +88,7 @@ function xHandleApproval(message) {
     posOpenSheet(`
       <h2 class="font-display text-xl font-extrabold mb-1">Owner approval</h2>
       <p class="text-sm text-ink/50 mb-3">${escapeHtml(message || "The owner must approve this.")}</p>
-      <input id="x-appr-pin" type="password" inputmode="numeric" maxlength="6" placeholder="Owner PIN" onkeydown="if(event.key==='Enter') xApprovalSubmit()" class="w-full border border-black/10 rounded-xl px-3 py-2.5 text-center text-xl tracking-widest" />
+      ${xPinField("x-appr-pin", "Owner PIN", { center: true, extra: `onkeydown="if(event.key==='Enter') xApprovalSubmit()"` })}
       <p id="x-appr-err" class="text-xs text-danger mt-2" style="min-height:1rem"></p>
       <div class="flex gap-2 mt-3">
         <button onclick="xApprovalDone(null)" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
@@ -89,7 +130,7 @@ function xViewStaffLogin() {
       <div class="card p-4 space-y-3">
         <input id="sl-email" type="email" inputmode="email" placeholder="Shop email (the owner's login email)" value="${escapeHtml(localStorage.getItem("denquva_staff_email") || "")}" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
         <input id="sl-name" placeholder="Your name" autocomplete="off" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
-        <input id="sl-pin" type="password" inputmode="numeric" maxlength="6" placeholder="Your PIN" onkeydown="if(event.key==='Enter') xStaffLogin()" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+        ${xPinField("sl-pin", "Your PIN", { extra: `onkeydown="if(event.key==='Enter') xStaffLogin()"` })}
         <button id="sl-go" onclick="xStaffLogin()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Log in as staff</button>
         <button onclick="goAuth('login')" class="w-full text-xs text-primary underline text-center">Owner log in</button>
       </div>
@@ -126,8 +167,23 @@ function xStaffSettingsHtml() {
       <h2 class="font-display font-bold mb-1">Signed in as ${escapeHtml(staffName())}</h2>
       <p class="text-sm text-ink/50">Staff account. Prices, costs, profit, debts and settings are kept for the owner.</p>
     </div>
+    ${xStaffShopsCardHtml()}
     ${xSupportCardHtml()}
-    <button onclick="logout()" class="w-full text-danger font-semibold py-2.5 rounded-xl border border-danger/20 mt-4">Log out</button>`;
+    <button onclick="logout()" class="w-full bg-danger text-white font-semibold py-3 rounded-xl mt-4">Log out</button>`;
+}
+function xStaffShopsCardHtml() {
+  const shops = (currentShop && currentShop.shops) || [];
+  if (shops.length < 2) return "";
+  return `
+    <div class="card p-4 mt-4">
+      <h2 class="font-display font-bold mb-1">Your shops</h2>
+      <p class="text-sm text-ink/50 mb-3">The owner gave you access to these shops.</p>
+      ${shops.map(s => `
+        <div class="flex items-center justify-between py-2 border-b border-black/5 last:border-0">
+          <span class="font-medium">${escapeHtml(s.name)}</span>
+          ${String(s.id) === String(activeShopId) ? `<span class="text-xs font-semibold text-primary">In use</span>` : `<button onclick="switchShop(${s.id})" class="text-xs bg-primary text-white font-semibold px-3 py-1.5 rounded-full">Use this shop</button>`}
+        </div>`).join("")}
+    </div>`;
 }
 
 // ---------------- support ----------------
@@ -543,38 +599,50 @@ async function xCancelCredit(id) {
 }
 
 // ---------------- owner settings cards ----------------
+let xOwnerShops = [];
+let xStaffList = [];
 async function xLoadOwnerData() {
   try {
-    const [staff, cfg, recovery] = await Promise.all([XApi.call("/api/x/staff"), XApi.call("/api/x/config"), xRecoveryCardHtml()]);
-    if (staff.length) XApi.call("/api/x/config", { method: "PUT", body: { refresh_staff_login: true } }).catch(() => {});
-    return { ready: true, staff, cfg, recovery };
+    const [roster, cfg, recovery] = await Promise.all([XApi.call("/api/x/staff"), XApi.call("/api/x/config"), xRecoveryCardHtml()]);
+    xOwnerShops = roster.shops; xStaffList = roster.staff;
+    if (roster.staff.length) XApi.call("/api/x/config", { method: "PUT", body: { avg_cost: cfg.avg_cost } }).catch(() => {});
+    return { ready: true, staff: roster.staff, shops: roster.shops, cfg, recovery };
   } catch (e) { return { ready: false, error: xNeedServer(e) }; }
+}
+function xShopNames(ids) {
+  return ids.map(id => (xOwnerShops.find(s => s.id === id) || {}).name).filter(Boolean).join(", ") || "No shop";
 }
 function xOwnerCardsHtml(d) {
   if (!d || !d.ready) {
     return `<div class="card p-4 mt-4"><h2 class="font-display font-bold mb-1">Staff and approvals</h2><p class="text-sm text-ink/50">${escapeHtml((d && d.error) || "Not available")}</p></div>${xSupportCardHtml()}`;
   }
+  const many = d.shops.length > 1;
   return `
     <div class="card p-4 mt-4">
       <h2 class="font-display font-bold mb-1">Staff and approvals</h2>
-      <p class="text-sm text-ink/50 mb-3">Give each person their own PIN. Staff can sell and take credit payments. They cannot see costs or profit, edit prices, delete, or open Settings. Reversing a sale, adjusting stock and confirming a payment by hand need your owner PIN.</p>
+      <p class="text-sm text-ink/50 mb-3">Add as many staff as you need, each with their own PIN. Staff can sell and take credit payments. They cannot see costs or profit, edit prices, delete, or change settings. Reversing a sale, adjusting stock and confirming a payment by hand need your owner PIN.</p>
       ${d.staff.length ? d.staff.map(s => `
-        <div class="flex items-center justify-between py-2 border-b border-black/5 last:border-0">
-          <div><div class="font-medium">${escapeHtml(s.name)}</div><div class="text-xs ${s.active ? "text-primary" : "text-ink/40"}">${s.active ? "Active" : "Paused"}</div></div>
-          <div class="flex gap-1.5">
-            <button onclick="xStaffReset(${s.id})" class="text-xs bg-black/5 font-semibold px-3 py-1.5 rounded-full">New PIN</button>
+        <div class="py-2.5 border-b border-black/5 last:border-0">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0"><div class="font-medium">${escapeHtml(s.name)}</div>
+              <div class="text-xs ${s.active ? "text-primary" : "text-ink/40"}">${s.active ? "Active" : "Paused"}${many ? " · " + escapeHtml(xShopNames(s.shops)) : ""}</div></div>
+          </div>
+          <div class="flex flex-wrap gap-1.5 mt-2">
+            ${many ? `<button onclick="xStaffShops(${s.id})" class="text-xs bg-primary-light text-primary-dark font-semibold px-3 py-1.5 rounded-full">Shops</button>` : ""}
+            <button onclick="xStaffReset(${s.id}, '${escapeHtml(s.name).replace(/'/g, "\\'")}')" class="text-xs bg-black/5 font-semibold px-3 py-1.5 rounded-full">New PIN</button>
             <button onclick="xStaffToggle(${s.id}, ${s.active ? 0 : 1})" class="text-xs bg-black/5 font-semibold px-3 py-1.5 rounded-full">${s.active ? "Pause" : "Resume"}</button>
             <button onclick="xStaffRemove(${s.id}, '${escapeHtml(s.name).replace(/'/g, "\\'")}')" class="text-xs bg-danger-light text-danger font-semibold px-3 py-1.5 rounded-full">Remove</button>
           </div>
         </div>`).join("") : `<p class="text-sm text-ink/40 mb-2">No staff yet.</p>`}
-      <div class="grid grid-cols-2 gap-2 mt-3">
-        <input id="st-name" placeholder="Staff name" class="border border-black/10 rounded-xl px-3 py-2.5" />
-        <input id="st-pin" type="password" inputmode="numeric" maxlength="6" placeholder="PIN, 4 to 6 digits" class="border border-black/10 rounded-xl px-3 py-2.5" />
+      <div class="space-y-2 mt-3">
+        <input id="st-name" placeholder="Staff name" class="w-full border border-black/10 rounded-xl px-3 py-2.5" />
+        ${xPinField("st-pin", "PIN, 4 to 6 digits")}
+        ${many ? `<div class="text-xs font-semibold text-ink/45 pt-1">Which shops can this person work in?</div>${d.shops.map(s => `<label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" class="st-shop" value="${s.id}" ${String(s.id) === String(activeShopId) ? "checked" : ""} style="width:18px;height:18px;accent-color:#0F6B4C" /><span>${escapeHtml(s.name)}</span></label>`).join("")}` : ""}
       </div>
-      <button onclick="xStaffAdd()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-2">Add staff</button>
+      <button onclick="xStaffAdd()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl mt-3">Add staff</button>
       <div class="border-t border-black/5 mt-4 pt-3">
         <div class="text-sm font-medium mb-1">Owner PIN ${d.cfg.has_owner_pin ? `<span class="text-xs text-primary">(set)</span>` : `<span class="text-xs text-danger">(not set)</span>`}</div>
-        <p class="text-xs text-ink/45 mb-2">You type this on the staff phone to approve a reversal, a stock change or a payment confirmed by hand.</p>
+        <p class="text-xs text-ink/45 mb-2">One PIN for all your shops. You type it on a staff phone to approve a reversal, a stock change or a payment confirmed by hand.</p>
         <button onclick="xSetOwnerPin()" class="w-full bg-black/5 font-semibold py-2.5 rounded-xl text-sm">${d.cfg.has_owner_pin ? "Change owner PIN" : "Set owner PIN"}</button>
       </div>
       <p class="text-xs text-ink/45 mt-3">Staff log in from the login page: tap Staff login, then enter your login email, their name and PIN.</p>
@@ -602,26 +670,46 @@ async function xStaffAdd() {
   const name = document.getElementById("st-name").value.trim(), pin = document.getElementById("st-pin").value.trim();
   if (!name) { toast("Enter the staff name"); return; }
   if (!/^\d{4,6}$/.test(pin)) { toast("The PIN must be 4 to 6 digits"); return; }
-  try { await XApi.call("/api/x/staff", { method: "POST", body: { name, pin } }); toast(`${name} added`); render(); } catch (e) { toast(xNeedServer(e)); }
+  const boxes = [...document.querySelectorAll(".st-shop")];
+  const shops = boxes.length ? boxes.filter(b => b.checked).map(b => Number(b.value)) : [Number(activeShopId)];
+  if (!shops.length) { toast("Pick at least one shop for this person"); return; }
+  try { await XApi.call("/api/x/staff", { method: "POST", body: { name, pin, shops } }); toast(`${name} added`); render(); } catch (e) { toast(xNeedServer(e)); }
 }
-async function xStaffReset(id) {
-  const pin = prompt("New PIN for this person (4 to 6 digits)");
-  if (!pin) return;
-  if (!/^\d{4,6}$/.test(pin)) { toast("The PIN must be 4 to 6 digits"); return; }
-  try { await XApi.call(`/api/x/staff/${id}`, { method: "PATCH", body: { pin } }); toast("PIN changed"); } catch (e) { toast(xNeedServer(e)); }
+function xStaffShops(id) {
+  const s = xStaffList.find(x => x.id === id);
+  if (!s) return;
+  posOpenSheet(`
+    <h2 class="font-display text-xl font-extrabold mb-1">Shops for ${escapeHtml(s.name)}</h2>
+    <p class="text-sm text-ink/50 mb-3">Tick the shops this person can work in. Untick to withdraw them. It takes effect at once.</p>
+    ${xOwnerShops.map(sh => `<label class="flex items-center gap-2 py-2 border-b border-black/5 cursor-pointer"><input type="checkbox" class="xs-shop" value="${sh.id}" ${s.shops.includes(sh.id) ? "checked" : ""} style="width:18px;height:18px;accent-color:#0F6B4C" /><span class="font-medium">${escapeHtml(sh.name)}</span></label>`).join("")}
+    <div class="flex gap-2 mt-4">
+      <button onclick="posCloseSheet()" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
+      <button onclick="xStaffShopsSave(${id})" class="flex-1 py-2.5 rounded-xl bg-primary text-white font-semibold">Save</button>
+    </div>`);
+}
+async function xStaffShopsSave(id) {
+  const shops = [...document.querySelectorAll(".xs-shop")].filter(b => b.checked).map(b => Number(b.value));
+  if (!shops.length) { toast("Pick at least one shop, or pause or remove this person"); return; }
+  try { await XApi.call(`/api/x/staff/${id}`, { method: "PATCH", body: { shops } }); posCloseSheet(); toast("Shops updated"); render(); } catch (e) { toast(xNeedServer(e)); }
+}
+function xStaffReset(id, name) {
+  xSecretSheet({ title: `New PIN for ${name}`, note: "4 to 6 digits.", placeholder: "New PIN", cta: "Change PIN", onSubmit: async pin => {
+    if (!/^\d{4,6}$/.test(pin)) { toast("The PIN must be 4 to 6 digits"); return false; }
+    await XApi.call(`/api/x/staff/${id}`, { method: "PATCH", body: { pin } }); toast("PIN changed");
+  } });
 }
 async function xStaffToggle(id, active) {
   try { await XApi.call(`/api/x/staff/${id}`, { method: "PATCH", body: { active: !!active } }); render(); } catch (e) { toast(xNeedServer(e)); }
 }
 async function xStaffRemove(id, name) {
-  if (!confirm(`Remove ${name}? They will not be able to log in.`)) return;
+  if (!confirm(`Remove ${name}? They will not be able to log in, and anyone logged in as them is cut off at once.`)) return;
   try { await XApi.call(`/api/x/staff/${id}`, { method: "DELETE" }); toast("Removed"); render(); } catch (e) { toast(xNeedServer(e)); }
 }
-async function xSetOwnerPin() {
-  const pin = prompt("Choose your owner PIN (4 to 6 digits). Keep it private.");
-  if (!pin) return;
-  if (!/^\d{4,6}$/.test(pin)) { toast("The PIN must be 4 to 6 digits"); return; }
-  try { await XApi.call("/api/x/owner-pin", { method: "POST", body: { pin } }); toast("Owner PIN saved"); render(); } catch (e) { toast(xNeedServer(e)); }
+function xSetOwnerPin() {
+  xSecretSheet({ title: "Owner PIN", note: "4 to 6 digits. One PIN for all your shops. Keep it private.", placeholder: "Owner PIN", cta: "Save PIN", onSubmit: async pin => {
+    if (!/^\d{4,6}$/.test(pin)) { toast("The PIN must be 4 to 6 digits"); return false; }
+    await XApi.call("/api/x/owner-pin", { method: "POST", body: { pin } }); toast("Owner PIN saved"); render();
+  } });
 }
 async function xSetAvgCost(on) {
   try { await XApi.call("/api/x/config", { method: "PUT", body: { avg_cost: !!on } }); toast(on ? "Average cost is on" : "Average cost is off"); } catch (e) { toast(xNeedServer(e)); }
@@ -704,16 +792,164 @@ async function xRecoveryCardHtml() {
       <button onclick="xMakeRecoveryCodes()" class="w-full bg-black/5 font-semibold py-2.5 rounded-xl text-sm">${remaining ? "Make new codes" : "Make recovery codes"}</button>
     </div>`;
 }
-async function xMakeRecoveryCodes() {
-  const pw = prompt("Type your password to make new recovery codes. Old codes stop working.");
-  if (!pw) return;
-  try {
+function xMakeRecoveryCodes() {
+  xSecretSheet({ title: "Make recovery codes", note: "Type your password. Old codes stop working.", placeholder: "Your password", numeric: false, cta: "Make codes", onSubmit: async pw => {
     const r = await XApi.call("/api/x/recovery-codes", { method: "POST", body: { current_password: pw } });
-    posOpenSheet(`
+    setTimeout(() => posOpenSheet(`
       <h2 class="font-display text-xl font-extrabold mb-1">Your recovery codes</h2>
       <p class="text-sm text-danger mb-3">Write these down now. They are shown only once.</p>
       <div class="grid grid-cols-2 gap-2 font-mono text-center">${r.codes.map(c => `<div class="bg-black/5 rounded-lg py-2 text-sm font-semibold">${c}</div>`).join("")}</div>
       <button onclick="navigator.clipboard && navigator.clipboard.writeText('${r.codes.join(" ")}').then(() => toast('Copied'))" class="w-full py-2.5 rounded-xl bg-primary-light text-primary-dark font-semibold mt-3">Copy all</button>
-      <button onclick="posCloseSheet(); render()" class="w-full py-2.5 rounded-xl border border-black/10 font-semibold mt-2">I wrote them down</button>`);
-  } catch (e) { toast(xNeedServer(e)); }
+      <button onclick="posCloseSheet(); render()" class="w-full py-2.5 rounded-xl border border-black/10 font-semibold mt-2">I wrote them down</button>`), 80);
+  } });
 }
+
+// ---------------- password reset by email code ----------------
+let xEmailCodeEmail = "";
+let xEmailCodeSentAt = 0;
+async function xSendEmailCodeUi(resend) {
+  const el = document.getElementById("forgot-email") || document.getElementById("ec-email-fixed");
+  const email = resend ? xEmailCodeEmail : (el ? el.value.trim() : "");
+  if (!email || !EMAIL_RE.test(email)) { toast("Enter a valid email address"); return; }
+  const btn = document.getElementById(resend ? "ec-resend" : "forgot-email-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+  try {
+    const res = await fetch(`${API_BASE}/auth/recovery/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+    await apiJson(res);
+    xEmailCodeEmail = email; xEmailCodeSentAt = Date.now();
+    toast("If that email has an account, a code is on its way.");
+    if (!resend) { authMode = "emailcode"; render(); } else { xCodeCooldown(); }
+  } catch (e) {
+    toast(xIsNetworkError(e) ? "No connection. Try again." : (e.status === 404 ? "Email codes need the server update." : e.message));
+    if (btn) { btn.disabled = false; btn.textContent = resend ? "Send a new code" : "Email me a reset code"; }
+  }
+}
+function xCodeCooldown() {
+  const btn = document.getElementById("ec-resend");
+  if (!btn) return;
+  const left = 60 - Math.floor((Date.now() - xEmailCodeSentAt) / 1000);
+  if (left > 0) { btn.disabled = true; btn.textContent = `Send a new code in ${left}s`; setTimeout(xCodeCooldown, 1000); }
+  else { btn.disabled = false; btn.textContent = "Send a new code"; }
+}
+function xViewEmailCode() {
+  setTimeout(xCodeCooldown, 50);
+  return `
+    <div class="max-w-sm mx-auto mt-10 md:mt-20">
+      <div class="text-center mb-6">
+        <h1 class="brand-row brand-row-center font-display text-3xl font-extrabold text-primary-dark"><img src="icons/icon-192.png" alt="" width="36" height="36" class="brand-logo brand-logo-lg" /><span>Denquva</span></h1>
+        <p class="text-sm text-ink/50 mt-1">Check your email for a 6 digit code</p>
+      </div>
+      <div class="card p-4 space-y-3">
+        <div class="text-sm text-ink/60">Code sent to <b>${escapeHtml(xEmailCodeEmail)}</b>. It works for 10 minutes. Check spam if you do not see it.</div>
+        <input id="ec-code" inputmode="numeric" maxlength="6" placeholder="6 digit code" autocomplete="one-time-code" class="w-full border border-black/10 rounded-xl px-3 py-2.5 text-center text-xl tracking-widest" />
+        ${passwordFieldHtml("ec-new", "New password")}
+        ${passwordFieldHtml("ec-confirm", "Confirm new password")}
+        <button id="ec-go" onclick="xSubmitEmailCode()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Update password</button>
+        <button id="ec-resend" onclick="xSendEmailCodeUi(true)" class="w-full bg-primary-light text-primary-dark font-semibold py-2.5 rounded-xl">Send a new code</button>
+        <button onclick="goAuth('forgot')" class="w-full text-xs text-ink/50 underline text-center">Use another way</button>
+        <button onclick="goAuth('login')" class="w-full text-xs text-ink/50 underline text-center">Back to log in</button>
+      </div>
+    </div>`;
+}
+async function xSubmitEmailCode() {
+  const code = document.getElementById("ec-code").value.trim();
+  const next = document.getElementById("ec-new").value;
+  const again = document.getElementById("ec-confirm").value;
+  if (!/^\d{6}$/.test(code)) { toast("Enter the 6 digit code from your email"); return; }
+  if (next.length < 6) { toast("Password must be at least 6 characters"); return; }
+  if (next !== again) { toast("The two passwords do not match"); return; }
+  const btn = document.getElementById("ec-go"); btn.disabled = true; btn.textContent = "Updating…";
+  try {
+    const res = await fetch(`${API_BASE}/auth/recovery/verify-reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: xEmailCodeEmail, code, new_password: next }) });
+    await apiJson(res);
+    authMode = "login"; toast("Password updated, log in with your new password."); render();
+  } catch (e) {
+    toast(xIsNetworkError(e) ? "No connection. Try again." : e.message);
+    btn.disabled = false; btn.textContent = "Update password";
+  }
+}
+
+// ---------------- reversed sales: search, date filter, show more and less ----------------
+const XRV_STEP = 10;
+let xRvRows = [];
+let xRvQuery = "";
+let xRvDate = "";
+let xRvLimit = XRV_STEP;
+function xRvDateText(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = n => String(n).padStart(2, "0");
+  return [d.toLocaleDateString(), `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`, `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`,
+    d.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }), d.toLocaleDateString(undefined, { month: "short", day: "numeric" }), d.toLocaleDateString(undefined, { month: "long" })].join(" ").toLowerCase();
+}
+function xRvLocalDay(iso) {
+  const d = new Date(iso); const p = n => String(n).padStart(2, "0");
+  return isNaN(d.getTime()) ? "" : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function xRvFiltered() {
+  const tokens = xRvQuery.toLowerCase().split(/\s+/).filter(Boolean);
+  return xRvRows.filter(r => {
+    if (xRvDate && xRvLocalDay(r.sold_at) !== xRvDate && xRvLocalDay(r.reversed_at) !== xRvDate) return false;
+    if (!tokens.length) return true;
+    const hay = `${r.product_name || ""} ${r.reason || ""} ${r.quantity} ${r.total_amount} ${xRvDateText(r.sold_at)} ${xRvDateText(r.reversed_at)}`.toLowerCase();
+    return tokens.every(t => hay.includes(t));
+  });
+}
+function xRvListHtml() {
+  const rows = xRvFiltered();
+  const shown = rows.slice(0, xRvLimit);
+  const removed = rows.reduce((a, r) => a + Number(r.total_amount || 0), 0);
+  const body = shown.length ? shown.map(r => `
+    <div class="py-3 border-b border-black/5 last:border-0">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="font-medium">${escapeHtml(r.product_name || "Item")}</div>
+          <div class="text-xs text-ink/45">${r.quantity} units · sold ${new Date(r.sold_at).toLocaleString()}</div>
+          <div class="text-xs text-ink/45">Reversed ${new Date(r.reversed_at).toLocaleString()}${r.reason ? ` · ${escapeHtml(r.reason)}` : ""}</div>
+        </div>
+        <div class="text-right" style="flex-shrink:0">
+          <div class="font-semibold text-danger">${formatMoney(r.total_amount)}</div>
+          <div class="text-xs text-ink/45">${r.restocked ? "Stock put back" : "Stock not changed"}</div>
+        </div>
+      </div>
+    </div>`).join("") : `<div class="text-center py-12 text-ink/40">${xRvRows.length ? "No reversed sale matches your search." : "No sales have been reversed."}</div>`;
+  const left = rows.length - shown.length;
+  const more = (left > 0 || xRvLimit > XRV_STEP) && rows.length > XRV_STEP ? `
+    <div class="flex gap-2 pt-3">
+      ${left > 0 ? `<button onclick="xRvMore()" class="flex-1 py-2.5 rounded-xl bg-primary-light text-primary-dark font-semibold text-sm">Show more (${Math.min(left, XRV_STEP)} of ${left} left)</button>` : ""}
+      ${xRvLimit > XRV_STEP ? `<button onclick="xRvLess()" class="flex-1 py-2.5 rounded-xl bg-black/5 font-semibold text-sm">Show less</button>` : ""}
+    </div>` : "";
+  return `
+    <div class="grid grid-cols-2 gap-3 mb-3">
+      <div class="stat-card"><div class="text-xs text-ink/50">Sales reversed${xRvQuery || xRvDate ? " (matching)" : ""}</div><div class="font-display text-xl font-extrabold">${rows.length}</div></div>
+      <div class="stat-card"><div class="text-xs text-ink/50">Money removed</div><div class="font-display text-xl font-extrabold">${formatMoney(removed)}</div></div>
+    </div>
+    <div class="card p-4">${body}${more}${rows.length > XRV_STEP ? `<div class="text-xs text-ink/40 text-center pt-3">Showing ${shown.length} of ${rows.length}</div>` : ""}</div>`;
+}
+function xRvRefresh() { const el = document.getElementById("xrv-list"); if (el) el.innerHTML = xRvListHtml(); }
+function xRvSearch(v) { xRvQuery = v; xRvLimit = XRV_STEP; xRvRefresh(); }
+function xRvDatePick(v) { xRvDate = v; xRvLimit = XRV_STEP; xRvRefresh(); const c = document.getElementById("xrv-clear"); if (c) c.style.display = v ? "" : "none"; }
+function xRvClearDate() { xRvDate = ""; const i = document.getElementById("xrv-date"); if (i) i.value = ""; xRvDatePick(""); }
+function xRvMore() { xRvLimit += XRV_STEP; xRvRefresh(); }
+function xRvLess() { xRvLimit = XRV_STEP; xRvRefresh(); const el = document.getElementById("xrv-top"); if (el) el.scrollIntoView({ block: "start", behavior: "smooth" }); }
+async function xViewReversed() {
+  let problem = "";
+  try { xRvRows = await Api.getReversals("all"); } catch (err) { problem = err.message || "Could not load reversed sales"; xRvRows = []; }
+  xRvLimit = XRV_STEP;
+  return `
+    <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">Sales</h1>
+    <div class="flex gap-2 mb-4 flex-wrap">${salesTabsHtml()}</div>
+    <div id="xrv-top"></div>
+    ${problem ? `<div class="text-center py-12 text-danger">${escapeHtml(problem)}</div>` : `
+    <div class="flex gap-2 mb-2">
+      <input id="xrv-search" type="search" placeholder="Search product, reason, or date like 14 Oct" value="${escapeHtml(xRvQuery)}" oninput="xRvSearch(this.value)" class="flex-1 min-w-0 border border-black/10 rounded-xl px-3 py-2.5 bg-white" />
+    </div>
+    <div class="flex items-center gap-2 mb-3">
+      <label class="text-xs text-ink/50">Day</label>
+      <input id="xrv-date" type="date" value="${xRvDate}" onchange="xRvDatePick(this.value)" class="border border-black/10 rounded-xl px-3 py-2 bg-white" />
+      <button id="xrv-clear" onclick="xRvClearDate()" style="${xRvDate ? "" : "display:none"}" class="text-xs text-primary underline">Clear day</button>
+    </div>
+    <p class="text-xs text-ink/45 mb-3">These sales are not counted in your revenue, profit or reports.</p>
+    <div id="xrv-list">${xRvListHtml()}</div>`}`;
+}
+
