@@ -29,7 +29,7 @@ Denquva helps business owners manage products, inventory, sales, profit, custome
 - Required, unchecked agreement to the Terms of Service and Privacy Policy, with links to both
 - Acceptance is recorded with each account (time and terms version) by the Worker
 - Persistent login sessions, with automatic logout when a session is no longer valid
-- Password reset through security questions, one-time recovery codes, or email codes sent with Resend
+- Password reset through the account email and security question, with optional one-time recovery codes
 - Multi shop and branch support under one account, each shop with its own products, sales, and settings
 - Owners can assign staff to specific shops and revoke access; staff can log out from the mobile header
 - Quarterly Paystack subscription billing with a 7 day trial
@@ -141,7 +141,6 @@ Everything can be done in the Cloudflare dashboard.
 **2. Worker secret**
 - Workers and Pages, your API Worker, Settings, Variables and Secrets
 - Add a Secret named `TURNSTILE_SECRET_KEY` with the Secret Key as its value
-- For email password resets, add a Secret named `RESEND_API_KEY` and a Text variable named `RESEND_FROM` using a sender on a verified Resend domain
 - The secrets are never placed in the frontend or in this repo
 
 **3. Database**
@@ -161,7 +160,7 @@ Everything can be done in the Cloudflare dashboard.
 **5. Website**
 - Set `TURNSTILE_SITE_KEY` in `js/app.js`, then upload the site files in Workers and Pages, your Pages project, Create deployment
 
-Other Worker variables already in use: `JWT_SECRET`, `AI_API_KEY`, `PAYSTACK_SECRET_KEY`, `PAYSTACK_PLAN_CODE`, and optionally `FRONTEND_URL`. For email password resets, configure `RESEND_API_KEY` and `RESEND_FROM`.
+Other Worker variables already in use: `JWT_SECRET`, `AI_API_KEY`, `PAYSTACK_SECRET_KEY`, `PAYSTACK_PLAN_CODE`, and optionally `FRONTEND_URL`.
 
 ## Checking a release
 
