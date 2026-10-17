@@ -6,10 +6,15 @@
   <meta name="theme-color" content="#0F6B4C" />
   <title>Shop delivery | Denquva</title>
   <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="css/app.css" />
   <style>
     body { margin: 0; background: #f4f7f5; color: #17221d; font-family: system-ui, sans-serif; }
     .wrap { width: min(100% - 28px, 760px); margin: 0 auto; padding: 24px 0 48px; }
+    .brand { display:flex; align-items:center; gap:10px; color:#0f6b4c; text-decoration:none; font-weight:800; font-size:1.1rem; }
+    .brand img { width:40px; height:40px; border-radius:12px; }
+    .brand-copy { margin:4px 0 18px 50px; }
     .card { background: white; border-radius: 18px; padding: 20px; box-shadow: 0 4px 20px #10271a0d; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 12px; }
     input, textarea, button { font: inherit; }
@@ -29,7 +34,7 @@
 </head>
 <body>
   <main class="wrap">
-    <header style="margin:4px 0 18px"><a href="./" style="color:#0f6b4c;text-decoration:none;font-weight:800">Denquva</a><p class="muted">Secure shop delivery request and tracking</p></header>
+    <header style="margin:4px 0 18px"><a class="brand" href="./"><img src="icons/icon-192.png" alt="" width="40" height="40" /><span>Denquva</span></a><p class="muted brand-copy">Secure shop delivery request and tracking</p></header>
     <div id="delivery-public-root" class="card" aria-live="polite">Loading…</div>
   </main>
   <script src="js/delivery-public.js" defer></script>
