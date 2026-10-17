@@ -954,14 +954,16 @@ async function refreshSessionInBackground() {
   } catch (err) {
     if (err.status === 401) { logout({ expired: true }); return; }
   }
-  try {
-    const freshSettings = await Api.getSettings();
-    if (JSON.stringify(freshSettings) !== JSON.stringify(shopSettings)) {
-      shopSettings = freshSettings;
-      needsRender = true;
-    }
-    writeCache(CACHE_KEYS.settings, freshSettings);
-  } catch {}
+  if (!isStaff()) {
+    try {
+      const freshSettings = await Api.getSettings();
+      if (JSON.stringify(freshSettings) !== JSON.stringify(shopSettings)) {
+        shopSettings = freshSettings;
+        needsRender = true;
+      }
+      writeCache(CACHE_KEYS.settings, freshSettings);
+    } catch {}
+  }
   if (needsRender) render();
 }
 
@@ -997,7 +999,7 @@ async function render() {
         shopFromCache = true;
         currentShop = cachedShop;
         if (!activeShopId) activeShopId = String(cachedShop.id);
-        shopSettings = shopSettings || readCache(CACHE_KEYS.settings);
+        shopSettings = isStaff() ? {} : (shopSettings || readCache(CACHE_KEYS.settings));
       } else {
         app.innerHTML = SKELETON_HTML;
         revealFooter();
@@ -1079,8 +1081,11 @@ async function render() {
   if (!USE_SAMPLE_DATA && !backgroundRefreshStarted) refreshSessionInBackground();
 
   if (!shopSettings) {
-    try { shopSettings = USE_SAMPLE_DATA ? sampleSettings : await Api.getSettings(); writeCache(CACHE_KEYS.settings, shopSettings); }
-    catch { shopSettings = {}; }
+    if (isStaff()) shopSettings = {};
+    else {
+      try { shopSettings = USE_SAMPLE_DATA ? sampleSettings : await Api.getSettings(); writeCache(CACHE_KEYS.settings, shopSettings); }
+      catch { shopSettings = {}; }
+    }
     if (stale()) return;
   }
 
