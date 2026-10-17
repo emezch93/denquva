@@ -1259,7 +1259,6 @@ async function ViewAuth() {
   if (authMode === "landing") return ViewLanding();
   if (authMode === "staff") return xViewStaffLogin();
   if (authMode === "recover") return xViewRecover();
-  if (authMode === "emailcode") return xViewEmailCode();
   const signup = authMode === "signup";
   return `
     <div class="max-w-sm mx-auto mt-10 md:mt-20">
@@ -1313,8 +1312,7 @@ function ViewForgotPassword() {
         ${forgotStep === "email" ? `
           <input id="forgot-email" type="email" placeholder="Email" class="w-full border border-black/10 rounded-xl px-3 py-2.5"
             onkeydown="if(event.key==='Enter') submitForgotEmail()" />
-          <button id="forgot-email-btn" onclick="xSendEmailCodeUi()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Email me a reset code</button>
-          <button id="forgot-submit-btn" onclick="submitForgotEmail()" class="w-full bg-primary-light text-primary-dark font-semibold py-2.5 rounded-xl">Use my security question</button>
+          <button id="forgot-submit-btn" onclick="submitForgotEmail()" class="w-full bg-primary text-white font-semibold py-2.5 rounded-xl">Continue with security question</button>
           <button onclick="goAuth('recover')" class="w-full text-xs text-primary underline text-center">I have a recovery code instead</button>
         ` : `
           <p class="text-sm font-medium">${forgotQuestion}</p>
