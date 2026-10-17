@@ -604,9 +604,14 @@ let xStaffList = [];
 async function xLoadOwnerData() {
   try {
     const [roster, cfg, recovery] = await Promise.all([XApi.call("/api/x/staff"), XApi.call("/api/x/config"), xRecoveryCardHtml()]);
-    xOwnerShops = roster.shops; xStaffList = roster.staff;
-    if (roster.staff.length) XApi.call("/api/x/config", { method: "PUT", body: { avg_cost: cfg.avg_cost } }).catch(() => {});
-    return { ready: true, staff: roster.staff, shops: roster.shops, cfg, recovery };
+    const staff = Array.isArray(roster && roster.staff) ? roster.staff : null;
+    const shops = Array.isArray(roster && roster.shops) ? roster.shops : null;
+    if (!staff || !shops || !cfg || typeof cfg !== "object") {
+      return { ready: false, error: "The server returned incomplete staff data. Deploy the latest Worker to enable staff and approvals." };
+    }
+    xOwnerShops = shops; xStaffList = staff;
+    if (staff.length) XApi.call("/api/x/config", { method: "PUT", body: { avg_cost: cfg.avg_cost } }).catch(() => {});
+    return { ready: true, staff, shops, cfg, recovery };
   } catch (e) { return { ready: false, error: xNeedServer(e) }; }
 }
 function xShopNames(ids) {
