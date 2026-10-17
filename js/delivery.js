@@ -54,7 +54,7 @@ async function ViewDelivery() {
       <div class="flex gap-2"><input id="delivery-public-link" readonly value="${deliveryEscape(customerUrl)}" placeholder="Refresh to generate a customer link" class="min-w-0 flex-1 border border-black/10 rounded-xl px-3 py-2.5 bg-black/5 text-sm" /><button onclick="deliveryCopyLink()" ${customerUrl ? "" : "disabled"} class="px-4 rounded-xl bg-primary text-white font-semibold">Copy</button></div>
       <label class="flex items-center gap-2 text-sm font-medium"><input id="delivery-enabled" type="checkbox" ${s.enabled ? "checked" : ""} /> Accept customer requests</label>
       <label class="block text-xs text-ink/50">Flat delivery fee (${deliveryEscape(shopSettings?.currency_code || "NGN")})<input id="delivery-fee" type="number" min="0" step="0.01" value="${Number(s.flat_delivery_fee || 0)}" class="mt-1 w-full border border-black/10 rounded-xl px-3 py-2.5 text-sm text-ink" /></label>
-      <div class="border-t border-black/5 pt-3"><h3 class="font-semibold text-sm">Shop sender address (used for courier rates)</h3><p class="text-xs text-ink/50 mb-2">Use the country’s two-letter ISO code, such as NG, GB, or US.</p>
+      <div class="border-t border-black/5 pt-3"><h3 class="font-semibold text-sm">Shop sender address (courier only)</h3><p class="text-xs text-ink/50 mb-2">Only needed for courier rates. Owner-driver delivery works without EasyPost or a sender address. Use the country’s two-letter ISO code, such as NG, GB, or US.</p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <input id="delivery-origin-name" placeholder="Contact name" value="${deliveryEscape(s.origin_address?.name || "")}" class="border border-black/10 rounded-xl px-3 py-2.5 text-sm" />
           <input id="delivery-origin-phone" placeholder="Contact phone" value="${deliveryEscape(s.origin_address?.phone || "")}" class="border border-black/10 rounded-xl px-3 py-2.5 text-sm" />
@@ -106,9 +106,13 @@ function deliveryOrderCard(order) {
 }
 
 function deliveryRateList(order) {
-  const rates = deliveryState.rates[order.id] || [];
+  let rates = deliveryState.rates[order.id];
+  if (!Array.isArray(rates)) {
+    try { rates = JSON.parse(order.courier_rates_json || "[]"); } catch { rates = []; }
+  }
+  if (!Array.isArray(rates)) rates = [];
   if (!rates.length) return "";
-  return `<div class="space-y-2 mt-3">${rates.map(rate => `<div class="flex items-center justify-between gap-2 rounded-xl bg-black/5 p-3 text-sm"><div><b>${deliveryEscape(rate.carrier)} ${deliveryEscape(rate.service)}</b><div class="text-xs text-ink/50">${rate.delivery_days ? `${rate.delivery_days} day(s) · ` : ""}${deliveryEscape(rate.currency)} ${deliveryEscape(rate.amount)}</div></div><button onclick="deliveryBuyLabel('${order.id}','${deliveryEscape(rate.id)}','${deliveryEscape(rate.carrier)}','${deliveryEscape(rate.service)}','${deliveryEscape(rate.currency)} ${deliveryEscape(rate.amount)}')" class="rounded-lg bg-primary text-white font-semibold px-3 py-2">Buy label</button></div>`).join("")}</div>`;
+  return `<div class="space-y-2 mt-3">${rates.map(rate => `<div class="flex items-center justify-between gap-2 rounded-xl bg-black/5 p-3 text-sm"><div><b>${deliveryEscape(rate.carrier)} ${deliveryEscape(rate.service)}</b><div class="text-xs text-ink/50">${rate.delivery_days ? `${rate.delivery_days} day(s) · ` : ""}${deliveryEscape(rate.currency)} ${deliveryEscape(rate.amount)}</div></div><button onclick="deliveryBuyLabel('${order.id}',this.dataset.rateId,this.dataset.carrier,this.dataset.service,this.dataset.price)" data-rate-id="${deliveryEscape(rate.id)}" data-carrier="${deliveryEscape(rate.carrier)}" data-service="${deliveryEscape(rate.service)}" data-price="${deliveryEscape(rate.currency)} ${deliveryEscape(rate.amount)}" class="rounded-lg bg-primary text-white font-semibold px-3 py-2">Buy label</button></div>`).join("")}</div>`;
 }
 
 async function deliveryReload() { try { const [orders, settings] = await Promise.all([DeliveryApi.orders(), DeliveryApi.settings()]); deliveryState.orders = orders; deliveryState.settings = settings; render(); } catch (err) { toast(err.message || "Could not refresh deliveries"); } }
@@ -119,7 +123,15 @@ async function deliverySaveSettings() {
     toast("Delivery settings saved"); render();
   } catch (err) { toast(err.message || "Could not save delivery settings"); }
 }
-function deliveryCopyLink() { const input = document.getElementById("delivery-public-link"); if (input) navigator.clipboard?.writeText(input.value).then(() => toast("Customer link copied")).catch(() => { input.select(); document.execCommand("copy"); toast("Customer link copied"); }); }
+async function deliveryCopyLink() {
+  const input = document.getElementById("delivery-public-link");
+  if (!input) return;
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(input.value);
+    else { input.select(); if (!document.execCommand("copy")) throw new Error("Copy unavailable"); }
+    toast("Customer link copied");
+  } catch { input.select(); document.execCommand("copy"); toast("Select and copy the customer link"); }
+}
 async function deliveryConnectEasyPost() {
   const input = document.getElementById("delivery-easypost-key"), key = input?.value.trim();
   if (!key) { toast("Enter your EasyPost API key"); return; }
