@@ -871,19 +871,25 @@ function renderNav() {
       <span>${item.icon}</span><span>${item.short || item.label}</span>
     </div>`).join("");
   document.getElementById("mobile-title").textContent = NAV_ITEMS.find(i => i.id === currentView).label;
-  const lo = document.getElementById("staff-logout");
-  if (lo) lo.classList.toggle("hidden", !authToken);
-  if (authToken) sidebar.innerHTML += `<div class="nav-item" onclick="logout()" title="Log out"><span>⎋</span><span>Log out</span></div>`;
+  const mobileLogout = document.getElementById("staff-logout");
+  const sidebarLogout = document.getElementById("sidebar-logout");
+  if (mobileLogout) mobileLogout.classList.toggle("hidden", !authToken);
+  if (sidebarLogout) sidebarLogout.classList.toggle("hidden", !authToken);
 }
 
 function hideNav() {
-  document.getElementById("sidebar-aside")?.classList.add("!hidden");
+  const signedIn = !!authToken;
   document.getElementById("bottom-nav")?.classList.add("!hidden");
-  document.getElementById("mobile-header")?.classList.add("!hidden");
+  document.getElementById("sidebar-nav")?.classList.toggle("hidden", signedIn);
+  document.getElementById("sidebar-logout")?.classList.toggle("hidden", !signedIn);
+  document.getElementById("sidebar-aside")?.classList.toggle("!hidden", !signedIn);
+  document.getElementById("staff-logout")?.classList.toggle("hidden", !signedIn);
+  document.getElementById("mobile-header")?.classList.toggle("!hidden", !signedIn);
 }
 
 function showNav() {
   document.getElementById("sidebar-aside")?.classList.remove("!hidden");
+  document.getElementById("sidebar-nav")?.classList.remove("hidden");
   document.getElementById("bottom-nav")?.classList.remove("!hidden");
   document.getElementById("mobile-header")?.classList.remove("!hidden");
 }
