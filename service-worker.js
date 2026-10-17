@@ -1,4 +1,4 @@
-const CACHE_NAME = "denquva-shell-v27";
+const CACHE_NAME = "denquva-shell-v28";
 const RUNTIME_CACHE = "denquva-runtime-v5";
 const SHELL_FILES = [
   "./",
@@ -102,4 +102,3 @@ self.addEventListener("fetch", (event) => {
     staleWhileRevalidate(event, sameOrigin ? CACHE_NAME : RUNTIME_CACHE, request, request)
   );
 });
-
