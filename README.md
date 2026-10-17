@@ -180,3 +180,7 @@ Other Worker variables already in use: `JWT_SECRET`, `AI_API_KEY`, `PAYSTACK_SEC
 - Sample data mode is off (`USE_SAMPLE_DATA = false`).
 
 Built by [CodeVent Digital](https://codeventdigital.site).
+
+## Customer delivery
+
+Denquva includes a delivery flow for shop-owned drivers or courier fulfillment, public order tracking, staff/owner delivery management, and inventory reservations while requests are active. Setup and deployment requirements are documented in [DELIVERY_DEPLOYMENT.md](DELIVERY_DEPLOYMENT.md); apply the D1 migration before deploying the Worker and frontend.
