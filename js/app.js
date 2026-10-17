@@ -872,8 +872,8 @@ function renderNav() {
     </div>`).join("");
   document.getElementById("mobile-title").textContent = NAV_ITEMS.find(i => i.id === currentView).label;
   const lo = document.getElementById("staff-logout");
-  if (lo) lo.classList.toggle("hidden", !isStaff());
-  if (isStaff()) sidebar.innerHTML += `<div class="nav-item" onclick="logout()" title="Log out"><span>⎋</span><span>Log out (${escapeHtml(staffName())})</span></div>`;
+  if (lo) lo.classList.toggle("hidden", !authToken);
+  if (authToken) sidebar.innerHTML += `<div class="nav-item" onclick="logout()" title="Log out"><span>⎋</span><span>Log out</span></div>`;
 }
 
 function hideNav() {
