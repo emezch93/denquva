@@ -44,7 +44,8 @@ let activeShopId = localStorage.getItem("denquva_active_shop_id") || null;
 // Who is using this device: the owner, or a staff member who logged in with a PIN.
 function xClaims() {
   try {
-    const p = authToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const parts = authToken.split(".");
+    const p = (parts.length === 2 ? parts[0] : parts[1]).replace(/-/g, "+").replace(/_/g, "/");
     return JSON.parse(atob(p + "=".repeat((4 - (p.length % 4)) % 4)));
   } catch { return {}; }
 }
