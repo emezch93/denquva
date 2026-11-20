@@ -30,7 +30,7 @@ Reproducible checks are in tests/hardware-pos-smoke.mjs. Run them with Node 22 o
 
     node tests/hardware-pos-smoke.mjs
 
-Checks cover all three D1 migrations, terminal ID validation and shop separation, cash-versus-electronic shift reconciliation SQL, one-open-shift-per-register constraint, barcode quantity increments, unknown barcode quick-add routing, HTML escaping, receipt contents, serial byte transmission mock, printer cleanup, Worker sale discount/tender calculations, stock deduction, terminal attribution, and cross-shop product isolation. JavaScript files were syntax-checked.
+Checks cover all three D1 migrations, Worker-origin shift list/open/close requests, terminal ID validation and shop separation, cash-versus-electronic shift reconciliation SQL, one-open-shift-per-register constraint, barcode quantity increments, unknown barcode quick-add routing, HTML escaping, receipt contents, serial byte transmission mock, printer cleanup, Worker sale discount/tender calculations, stock deduction, terminal attribution, and cross-shop product isolation. JavaScript files were syntax-checked.
 
 ## Remaining checks and limits
 
