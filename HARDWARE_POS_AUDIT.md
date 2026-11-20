@@ -18,13 +18,11 @@ No new paid service or third-party runtime dependency was added.
 
 ## D1 migration
 
-Run both migrations once against the existing duka-db D1 database before deploying the updated Worker, in order. They add nullable terminal metadata and discount metadata; existing rows are retained.
+The D1 database already contained the terminal and discount columns. Those earlier migrations must not be rerun on this database. The corrected shift/tender SQL was applied after inspecting the live schema; see migrations/README.md.
 
-    npx wrangler d1 execute duka-db --remote --file migrations/hardware-pos.sql
-    npx wrangler d1 execute duka-db --remote --file migrations/hardware-pos-discounts.sql
-    npx wrangler d1 execute duka-db --remote --file migrations/hardware-pos-shifts.sql
+Do not rerun these one-time migration files against the configured production database. Inspect each target D1 schema before applying migrations.
 
-Do not rerun any migration after it succeeds. The migrations were exercised against a local SQLite database with existing sales, reversals and pending-sales tables represented. No production migration has been run.
+The production D1 shift migration was applied after correcting it to match the inspected schema. The SQL was also exercised against a local SQLite database.
 
 ## Validation run
 
@@ -47,4 +45,4 @@ Checks cover all three D1 migrations, terminal ID validation and shop separation
 - Drawer operation is an explicit owner-only test action. Automatic drawer opening, cashier-level drawer permissions, customer receipt fields, shifts, and terminal-filtered reporting are not implemented.
 - This smoke suite is not a substitute for the absent full browser/API test suite or physical-hardware acceptance testing.
 
-No merge, push, migration, or deployment was performed.
+The application PR was merged. The Worker is tracked separately at server/worker.js for reference.
