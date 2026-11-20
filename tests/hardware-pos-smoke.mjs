@@ -16,7 +16,7 @@ assert.equal(vm.runInContext('cleanTerminalId("bad id")', workerContext), null);
 assert.equal(vm.runInContext('cleanTerminalId("x")', workerContext), null);
 
 const db = new DatabaseSync(":memory:");
-db.exec("CREATE TABLE sales(id INTEGER PRIMARY KEY, shop_id INTEGER, product_id INTEGER, product_name TEXT, quantity REAL, unit_price REAL, unit_cost REAL, total_amount REAL, estimated_profit REAL, sold_at TEXT); CREATE TABLE sale_reversals(id INTEGER PRIMARY KEY, shop_id INTEGER, sale_id INTEGER, product_id INTEGER, product_name TEXT, quantity REAL, unit_price REAL, unit_cost REAL, total_amount REAL, estimated_profit REAL, sold_at TEXT, restocked INTEGER, reason TEXT); CREATE TABLE pending_sales(id TEXT PRIMARY KEY, shop_id INTEGER, method TEXT, total_kobo INTEGER, items TEXT, status TEXT, terminal_serial TEXT, provider TEXT, provider_ref TEXT, attempts INTEGER, push_note TEXT, source TEXT, created_at INTEGER, expires_at INTEGER, last_check INTEGER);");
+db.exec("CREATE TABLE sales(id INTEGER PRIMARY KEY, shop_id INTEGER, product_id INTEGER, product_name TEXT, quantity REAL, unit_price REAL, unit_cost REAL, total_amount REAL, estimated_profit REAL, sold_at TEXT); CREATE TABLE sale_reversals(id INTEGER PRIMARY KEY, shop_id INTEGER, sale_id INTEGER, product_id INTEGER, product_name TEXT, quantity REAL, unit_price REAL, unit_cost REAL, total_amount REAL, estimated_profit REAL, sold_at TEXT, restocked INTEGER, reason TEXT, reversed_at TEXT NOT NULL DEFAULT (datetime('now'))); CREATE TABLE pending_sales(id TEXT PRIMARY KEY, shop_id INTEGER, method TEXT, total_kobo INTEGER, items TEXT, status TEXT, terminal_serial TEXT, provider TEXT, provider_ref TEXT, attempts INTEGER, push_note TEXT, source TEXT, created_at INTEGER, expires_at INTEGER, last_check INTEGER);");
 db.exec(migration);
 db.exec(await text("migrations/hardware-pos-discounts.sql"));
 db.exec(await text("migrations/hardware-pos-shifts.sql"));
@@ -72,8 +72,12 @@ workerDb.close();
 const source = await text("js/hardware-pos.js");
 const values = new Map();
 const writes = [];
+const apiCalls = [];
 const context = vm.createContext({
   TextEncoder, Uint8Array, crypto: webcrypto,
+  API_BASE: "https://denquva-api.test", USE_SAMPLE_DATA: false,
+  authFetch: async (url, options = {}) => { apiCalls.push({url, options}); return { ok: true, json: async () => String(options.method || "GET").toUpperCase() === "PATCH" ? {success:true, expected_cash:30, closing_cash:30, variance:0} : String(options.method || "GET").toUpperCase() === "POST" ? {success:true,id:"sh_test"} : {current:null,shifts:[]} }; },
+  prompt: () => "30",
   window: { isSecureContext: true }, navigator: {},
   document: { addEventListener() {}, getElementById() { return null; } },
   localStorage: { getItem(k) { return values.get(k) || null; }, setItem(k, v) { values.set(k, String(v)); } },
@@ -100,6 +104,14 @@ vm.runInContext(source, context, { filename: "hardware-pos.js" });
 
 const firstId = vm.runInContext("hardwareTerminalId()", context);
 assert.equal(vm.runInContext("hardwareTerminalId()", context), firstId, "terminal id persists on one shop");
+await vm.runInContext('hardwareLoadShift()', context);
+assert.ok(apiCalls.at(-1).url.startsWith('https://denquva-api.test/api/x/pos-shifts?'), 'shift list uses Worker API base');
+await vm.runInContext('hardwareOpenShift()', context);
+assert.ok(apiCalls.some(c => c.options.method === 'POST' && c.url === 'https://denquva-api.test/api/x/pos-shifts'), 'open shift posts to Worker API base');
+vm.runInContext('hardwareShift={id:"sh_test"}', context);
+await vm.runInContext('hardwareCloseShift()', context);
+assert.ok(apiCalls.some(c => c.options.method === 'PATCH' && c.url === 'https://denquva-api.test/api/x/pos-shifts/sh_test'), 'close shift patches Worker API base');
+console.log('PASS: shift list/open/close use the separate Worker API origin');
 vm.runInContext("activeShopId = 13", context);
 assert.notEqual(vm.runInContext("hardwareTerminalId()", context), firstId, "terminal id differs by shop");
 vm.runInContext('activeShopId=12; hardwareProducts=multiSaleProducts=[{id:7,name:"Tea",sku:"T001",quantity:4,selling_price:150}]; hardwareScan("T001"); hardwareScan("T001")', context);
