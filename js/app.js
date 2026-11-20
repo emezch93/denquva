@@ -1,3 +1,4 @@
+let salesTerminalFilter = "all";
 const API_BASE = "https://denquva-api.emezch93.workers.dev";
 const USE_SAMPLE_DATA = false;
 // Cloudflare Turnstile PUBLIC site key (safe to expose). The secret key lives
@@ -372,27 +373,33 @@ const Api = {
       const failed = [];
       let totalAmount = 0;
       let totalProfit = 0;
+      let discountTotal = 0;
       for (const item of items) {
         const p = sampleProducts.find(p => p.id === item.product_id);
         if (!p) { failed.push({ product_id: item.product_id, reason: "Product not found" }); continue; }
         if (p.quantity < item.quantity) { failed.push({ product_id: item.product_id, reason: `Only ${p.quantity} units of ${p.name} are available.` }); continue; }
         p.quantity -= item.quantity;
-        const itemAmount = p.selling_price * item.quantity;
-        const itemProfit = (p.selling_price - p.cost_price) * item.quantity;
+        const itemSubtotal = Math.round(p.selling_price * item.quantity * 100) / 100;
+        const discountAmount = Math.round(itemSubtotal * Number(opts.discountPercent || 0)) / 100;
+        const itemAmount = itemSubtotal - discountAmount;
+        const itemProfit = itemAmount - p.cost_price * item.quantity;
         sampleSales.unshift({
           id: nextSaleId++, product_id: p.id, product_name: p.name, quantity: item.quantity,
           unit_price: p.selling_price, unit_cost: p.cost_price,
-          total_amount: itemAmount, estimated_profit: itemProfit, sold_at: new Date().toISOString(),
+          total_amount: itemAmount, subtotal_amount: itemSubtotal, discount_amount: discountAmount, estimated_profit: itemProfit, sold_at: new Date().toISOString(),
         });
         succeeded.push({ product_id: p.id, product_name: p.name, quantity: item.quantity, new_quantity: p.quantity, total_amount: itemAmount, estimated_profit: itemProfit });
         totalAmount += itemAmount;
         totalProfit += itemProfit;
+        discountTotal += discountAmount;
       }
-      return { succeeded, failed, total_amount: totalAmount, total_profit: totalProfit };
+      return { succeeded, failed, total_amount: totalAmount, total_profit: totalProfit, discount_total: discountTotal };
     }
     const headers = { "Content-Type": "application/json", "X-Payment-Method": opts.method || "cash" };
     if (opts.ref) headers["X-Client-Ref"] = opts.ref;
     if (opts.clientTime) headers["X-Client-Time"] = opts.clientTime;
+    const terminalId = opts.terminalId || (typeof hardwareTerminalId === "function" ? hardwareTerminalId() : "");
+    if (terminalId) headers["X-Denquva-Terminal-Id"] = terminalId;
     let signal;
     if (opts.timeoutMs && typeof AbortController !== "undefined") {
       const ctrl = new AbortController();
@@ -401,7 +408,7 @@ const Api = {
     }
     const res = await authFetch(`${API_BASE}/api/sales/batch`, {
       method: "POST", headers, signal,
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ items, discount_percent: Number(opts.discountPercent || 0) }),
     });
     return apiJson(res);
   },
@@ -806,10 +813,12 @@ const NAV_ICON_SVG = {
 };
 
 NAV_ICON_SVG.delivery = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h11v11H3z"/><path d="M14 11h4l3 3v4h-7z"/><circle cx="7.5" cy="19" r="1.5"/><circle cx="18" cy="19" r="1.5"/><path d="M6 10h5M6 13h3"/></svg>`;
+NAV_ICON_SVG.hardwarePos = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M7 21h10M12 17v4M7 8h10M7 12h4"/><circle cx="17" cy="12" r="1"/></svg>`;
 
 const NAV_ALL = [
   { id: "dashboard", label: "Dashboard", icon: NAV_ICON_SVG.dashboard, hint: "Today's sales, revenue, and low stock at a glance", short: "Home" },
   { id: "products", label: "Products", icon: NAV_ICON_SVG.products, hint: "Add, edit, sell, and restock your products" },
+  { id: "hardware-pos", label: "Counter POS", icon: NAV_ICON_SVG.hardwarePos, hint: "Counter sales, barcode scanning, and receipt printing", short: "POS" },
   { id: "sales", label: "Sales", icon: NAV_ICON_SVG.sales, hint: "Your sales history and estimated profit" },
   { id: "delivery", label: "Deliveries", icon: NAV_ICON_SVG.delivery, hint: "Manage customer delivery requests and live tracking", short: "Delivery" },
   { id: "credit", label: "Credit Sales", icon: NAV_ICON_SVG.credit, hint: "Products given on credit, and who still owes you", short: "Credit" },
@@ -819,7 +828,7 @@ const NAV_ALL = [
 ];
 
 // Staff see fewer pages. The server enforces this too.
-const STAFF_VIEWS = ["dashboard", "products", "sales", "delivery", "credit", "settings"];
+const STAFF_VIEWS = ["dashboard", "products", "hardware-pos", "sales", "delivery", "credit", "settings"];
 let NAV_ITEMS = NAV_ALL;
 function xApplyRole() {
   NAV_ITEMS = isStaff() ? NAV_ALL.filter(i => STAFF_VIEWS.includes(i.id)) : NAV_ALL;
@@ -1097,6 +1106,7 @@ async function render() {
     let html = "";
     if (view === "dashboard") html = await ViewDashboard();
     if (view === "products") html = await ViewProducts();
+    if (view === "hardware-pos") html = await hardwarePosView();
     if (view === "sales") html = await ViewSales();
     if (view === "delivery") html = await ViewDelivery();
     if (view === "credit") html = await ViewCredit();
@@ -2096,7 +2106,7 @@ async function confirmMultiSale() {
 
   try {
     // A cash sale never waits on a bad connection: after 20 seconds it is saved on the phone and synced later.
-    const result = await Api.sellBatch(items, { method: "cash", ref, timeoutMs: 20000 });
+    const result = await Api.sellBatch(items, { method: "cash", ref, timeoutMs: 20000, discountPercent: snapshot ? snapshot.discountPercent : 0 });
     closeModal("multisale-modal");
 
     if (result.failed && result.failed.length) {
@@ -2106,12 +2116,14 @@ async function confirmMultiSale() {
       toast(`Sold ${result.succeeded.length} items for ${formatMoney(result.total_amount)}`);
     }
     if (snapshot) posAfterCashSale(snapshot, result);
+    if (typeof hardwareAfterCashSale === "function") await hardwareAfterCashSale(result, ref);
+    if (typeof hardwareDiscountPercent === "number") hardwareDiscountPercent = 0;
 
     multiSaleCart = new Map();
     render();
   } catch (err) {
     if (!USE_SAMPLE_DATA && ref && typeof xIsNetworkError === "function" && xIsNetworkError(err)) {
-      xOfflineCashSale(ref, items, snapshot);
+      await xOfflineCashSale(ref, items, snapshot);
       return;
     }
     toast(err.message || "Could not complete the sale");
@@ -2227,16 +2239,19 @@ async function ViewSales() {
   if (salesRange === "eod") return xViewEod();
   const sales = await Api.getSales(salesRange);
   lastRenderedSales = sales;
+  const terminalIds = [...new Set(sales.map(s => s.terminal_id).filter(Boolean))].sort();
+  if (salesTerminalFilter !== "all" && !terminalIds.includes(salesTerminalFilter)) salesTerminalFilter = "all";
+  const visibleSales = salesTerminalFilter === "all" ? sales : sales.filter(s => s.terminal_id === salesTerminalFilter);
   const staff = isStaff();
-  const totalRevenue = sales.reduce((a, s) => a + s.total_amount, 0);
-  const totalProfit = staff ? 0 : sales.reduce((a, s) => a + (s.estimated_profit || 0), 0);
+  const totalRevenue = visibleSales.reduce((a, s) => a + s.total_amount, 0);
+  const totalProfit = staff ? 0 : visibleSales.reduce((a, s) => a + (s.estimated_profit || 0), 0);
   let expenses = 0;
   if (!staff && !USE_SAMPLE_DATA) { try { expenses = (await XApi.summary(salesRange)).expenses || 0; } catch {} }
 
   const tabs = salesTabsHtml();
 
-  const rows = sales.length
-    ? sales.map(s => `
+  const rows = visibleSales.length
+    ? visibleSales.map(s => `
         <div onclick="openSaleDetail(${s.id})" class="flex items-center justify-between py-3 border-b border-black/5 last:border-0 cursor-pointer active:bg-black/5 rounded-lg px-1 -mx-1">
           <div>
             <div class="font-medium">${s.product_name}</div>
@@ -2252,6 +2267,7 @@ async function ViewSales() {
   return `
     <h1 class="font-display text-2xl font-extrabold hidden md:block mb-4">Sales</h1>
     <div class="flex gap-2 mb-4 flex-wrap">${tabs}</div>
+    ${terminalIds.length ? `<label class="block mb-3 text-sm font-semibold">Register <select class="border border-black/10 rounded-xl px-3 py-2 bg-white" onchange="salesTerminalFilter=this.value;render()"><option value="all" ${salesTerminalFilter === "all" ? "selected" : ""}>All registers</option>${terminalIds.map(id => `<option value="${escapeHtml(id)}" ${salesTerminalFilter === id ? "selected" : ""}>Register ${escapeHtml(id.slice(-8).toUpperCase())}</option>`).join("")}</select></label>` : ""}
     <div class="grid grid-cols-2 gap-3 mb-4">
       <div class="stat-card"><div class="text-xs text-ink/50">Revenue</div><div class="font-display text-xl font-extrabold">${formatMoney(totalRevenue)}</div></div>
       ${staff
