@@ -239,13 +239,15 @@ function posCloseSheet() {
 
 function posQuickAdd(code, target) {
   const safe = escapeHtml(code);
+  const jsCode = escapeHtml(JSON.stringify(String(code)));
+  const jsTarget = escapeHtml(JSON.stringify(String(target)));
   posOpenSheet(`
     <h2 class="font-display text-xl font-extrabold mb-1">New product</h2>
     <p class="text-sm text-ink/50 mb-4">Barcode <b>${safe}</b> is not in your products yet. Add it now and it goes straight into the cart.</p>
     <div class="space-y-3">
       <div class="flex gap-2">
         <input id="qa-name" placeholder="Product name" class="flex-1 min-w-0 border border-black/10 rounded-xl px-3 py-2.5" />
-        <button type="button" onclick="posLookupName('${safe}')" class="text-xs bg-primary-light text-primary-dark font-semibold px-3 rounded-xl whitespace-nowrap">Find name</button>
+        <button type="button" onclick="posLookupName(${jsCode})" class="text-xs bg-primary-light text-primary-dark font-semibold px-3 rounded-xl whitespace-nowrap">Find name</button>
       </div>
       <div class="grid grid-cols-2 gap-2">
         <input id="qa-price" type="number" inputmode="decimal" placeholder="Selling price" class="border border-black/10 rounded-xl px-3 py-2.5" />
@@ -255,7 +257,7 @@ function posQuickAdd(code, target) {
     </div>
     <div class="flex gap-2 mt-5">
       <button onclick="posCloseSheet()" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Cancel</button>
-      <button id="qa-save" onclick="posSaveQuickAdd('${safe}', '${target}')" class="flex-1 py-2.5 rounded-xl bg-primary text-white font-semibold">Save and add</button>
+      <button id="qa-save" onclick="posSaveQuickAdd(${jsCode}, ${jsTarget})" class="flex-1 py-2.5 rounded-xl bg-primary text-white font-semibold">Save and add</button>
     </div>`);
   setTimeout(() => { const n = posEl("qa-name"); if (n) n.focus(); }, 60);
 }
@@ -292,10 +294,10 @@ async function posSaveQuickAdd(code, target) {
       low_stock_threshold: (shopSettings && shopSettings.default_low_stock_threshold) || 5,
     });
     const products = await Api.getProducts("");
-    if (target === "multisale") multiSaleProducts = products; else creditSaleProducts = products;
+    if (target === "multisale") multiSaleProducts = products; else if (target === "hardware-pos") { hardwareProducts = products; multiSaleProducts = products; } else creditSaleProducts = products;
     posCloseSheet();
     const p = posFindByCode(products, code);
-    if (p) { if (target === "multisale") addToMultiSaleCart(p.id); else addToCreditSaleCart(p.id); }
+    if (p) { if (target === "multisale") addToMultiSaleCart(p.id); else if (target === "hardware-pos") { multiSaleCart.set(p.id, (multiSaleCart.get(p.id) || 0) + 1); hardwareRefreshCart(); hardwareFilter(hardwareFilterTerm); } else addToCreditSaleCart(p.id); }
     posBeep(true);
     toast(`${name} saved and added`);
   } catch (err) {
@@ -315,7 +317,11 @@ function posCartSnapshot() {
     items.push({ product_id: p.id, name: p.name, quantity: qty, unit_price: p.selling_price });
     total += p.selling_price * qty;
   });
-  return { items, total, count: items.reduce((n, i) => n + i.quantity, 0) };
+  const subtotal = total;
+  const discountPercent = currentView === "hardware-pos" && !isStaff() && typeof hardwareDiscountPercent === "number" ? hardwareDiscountPercent : 0;
+  const discountTotal = items.reduce((sum, item) => sum + Math.round(Math.round(Number(item.unit_price) * 100) * item.quantity * discountPercent / 100), 0) / 100;
+  total = Math.max(0, subtotal - discountTotal);
+  return { items, total, subtotal, discountPercent, discountTotal, count: items.reduce((n, i) => n + i.quantity, 0) };
 }
 
 async function posOpenCharge() {
@@ -374,7 +380,8 @@ async function posMoveCartToCredit() {
   creditSaleCustomerName = "";
   creditSalePhone = "";
   if (typeof xLoadCustomers === "function") await xLoadCustomers();
-  creditSaleDiscount = 0;
+  creditSaleDiscount = currentView === "hardware-pos" && hardwareDiscountPercent ? Math.round(posCartSnapshot().subtotal * hardwareDiscountPercent) / 100 : 0;
+  if (typeof hardwareDiscountPercent === "number") hardwareDiscountPercent = 0;
   renderCreditSaleModal();
   posEl("creditsale-modal").classList.remove("hidden");
 }
@@ -396,9 +403,10 @@ async function posCreatePending(method) {
   const terminal = select ? select.value : "";
   if (terminal) localStorage.setItem("denquva_pos_terminal", terminal);
   try {
-    const p = await PosApi.create({ method, total: snap.total, items: snap.items, terminal_serial: terminal });
+    const p = await PosApi.create({ method, total: snap.total, items: snap.items, terminal_serial: terminal, device_terminal_id: hardwareTerminalId(), discount_percent: snap.discountPercent || 0 });
     localStorage.setItem("denquva_pos_enabled", "1");
     multiSaleCart = new Map();     // the basket now lives in the pending sale
+    if (typeof hardwareDiscountPercent === "number") hardwareDiscountPercent = 0;
     closeModal("multisale-modal");
     posRefreshPendingCount();
     posWaiting(p);
@@ -530,7 +538,7 @@ async function posFinalize(p, quiet) {
     }
     let result;
     try {
-      result = await Api.sellBatch(p.items.map(i => ({ product_id: i.product_id, quantity: i.quantity })), { method: p.method === "transfer" ? "transfer" : "card", ref: "pos-" + p.id });
+      result = await Api.sellBatch(p.items.map(i => ({ product_id: i.product_id, quantity: i.quantity })), { method: p.method === "transfer" ? "transfer" : "card", ref: "pos-" + p.id, terminalId: p.device_terminal_id || "", discountPercent: p.discount_percent || 0 });
     } catch (err) {
       await PosApi.act(p.id, "release").catch(() => {});
       throw err;
@@ -545,7 +553,8 @@ async function posFinalize(p, quiet) {
       toast(`Recorded a paid sale of ${formatMoney(p.total)}`);
     } else {
       const sales = (result.succeeded || []).filter(x => x.sale_id).map(x => ({ id: x.sale_id, product_name: x.product_name, quantity: x.quantity, total_amount: x.total_amount }));
-      posShowReceipt({ items: p.items, total: p.total, method: p.method, reference: p.id, failed, time: p.paid_at || Date.now(), sales });
+      posShowReceipt({ items: p.items, subtotal: p.total + Number(p.discount_total || 0), discount_total: Number(p.discount_total || 0), total: p.total, method: p.method, reference: p.id, failed, time: p.paid_at || Date.now(), sales });
+      if (typeof hardwareDiscountPercent === "number") hardwareDiscountPercent = 0;
     }
     render();
   } catch (err) {
@@ -615,7 +624,7 @@ setTimeout(posRecoverPaid, 4000);
 function posReceiptText(r) {
   const shop = (shopSettings && shopSettings.business_name) || (currentShop && currentShop.shop_name) || "Receipt";
   const lines = r.items.map(i => `${i.quantity} x ${i.name}  ${formatMoney(i.unit_price * i.quantity)}`);
-  return [shop, posNowClock(r.time), "", ...lines, "", `Total: ${formatMoney(r.total)}`, `Paid by: ${posMethodLabel(r.method)}`, r.reference ? `Ref: ${r.reference}` : "", "", "Thank you."].filter((l, i, a) => l !== "" || a[i - 1] !== "").join("\n");
+  return [shop, posNowClock(r.time), "", ...lines, "", ...(r.discount_total ? [`Subtotal: ${formatMoney(r.subtotal)}`, `Discount: -${formatMoney(r.discount_total)}`] : []), `Total: ${formatMoney(r.total)}`, `Paid by: ${posMethodLabel(r.method)}`, r.reference ? `Ref: ${r.reference}` : "", "", "Thank you."].filter((l, i, a) => l !== "" || a[i - 1] !== "").join("\n");
 }
 
 function posReceiptHtml(r) {
@@ -627,6 +636,7 @@ function posReceiptHtml(r) {
       <div class="pos-r-rows">
         ${r.items.map(i => `<div class="pos-r-row"><span>${i.quantity} × ${escapeHtml(i.name)}</span><span>${formatMoney(i.unit_price * i.quantity)}</span></div>`).join("")}
       </div>
+      ${r.discount_total ? `<div class="pos-r-row"><span>Subtotal</span><span>${formatMoney(r.subtotal)}</span></div><div class="pos-r-row"><span>Discount</span><span>−${formatMoney(r.discount_total)}</span></div>` : ""}
       <div class="pos-r-row pos-r-total"><span>Total</span><span>${formatMoney(r.total)}</span></div>
       <div class="pos-r-meta">Paid by ${posMethodLabel(r.method)}${r.reference ? ` · ${escapeHtml(r.reference)}` : ""}</div>
     </div>`;
@@ -663,6 +673,7 @@ function posPrintHtml(html) {
 
 function posPrintReceipt() {
   if (!posLastReceipt) return;
+  if (typeof hardwarePrintReceipt === "function" && hardwarePrinterReady()) { hardwarePrintReceipt(posLastReceipt); return; }
   const r = posLastReceipt;
   const shop = escapeHtml((shopSettings && shopSettings.business_name) || (currentShop && currentShop.shop_name) || "");
   posPrintHtml(`<!doctype html><html><head><meta charset="utf-8"><style>
@@ -687,9 +698,9 @@ function posShareReceipt() {
 function posAfterCashSale(snapshot, result) {
   const sold = new Map((result.succeeded || []).map(s => [s.product_id, s]));
   const items = snapshot.items.filter(i => sold.has(i.product_id)).map(i => ({ ...i, quantity: sold.get(i.product_id).quantity }));
-  const total = items.reduce((n, i) => n + i.unit_price * i.quantity, 0);
+  const subtotal = items.reduce((n, i) => n + i.unit_price * i.quantity, 0);
   const sales = (result.succeeded || []).filter(x => x.sale_id).map(x => ({ id: x.sale_id, product_name: x.product_name, quantity: x.quantity, total_amount: x.total_amount }));
-  posShowReceipt({ items, total, method: "cash", failed: result.failed || [], time: Date.now(), sales });
+  posShowReceipt({ items, subtotal, discount_total: Number(result.discount_total || 0), total: result.total_amount, method: "cash", failed: result.failed || [], time: Date.now(), sales });
 }
 
 // ---------------- barcode labels (Code 128) ----------------

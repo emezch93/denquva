@@ -233,10 +233,32 @@ function xWrite(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } 
 function xNewRef() { return "o" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 function xCacheProducts(list) { try { localStorage.setItem(`denquva_prod_${activeShopId}`, JSON.stringify(list)); } catch {} }
 function xReadProductCache() { try { return JSON.parse(localStorage.getItem(`denquva_prod_${activeShopId}`) || "null"); } catch { return null; } }
-function xQueueAdd(ref, items) {
+let xQueueIdbPromise = null;
+function xQueueOpenDb() {
+  if (!("indexedDB" in window)) return Promise.reject(new Error("IndexedDB unavailable"));
+  if (!xQueueIdbPromise) xQueueIdbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open("denquva-pos-offline", 1);
+    request.onupgradeneeded = () => { const db = request.result; if (!db.objectStoreNames.contains("sales")) db.createObjectStore("sales", { keyPath: "ref" }); };
+    request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+  }).catch(err => { xQueueIdbPromise = null; throw err; });
+  return xQueueIdbPromise;
+}
+async function xQueueIdbPut(entry) { const db = await xQueueOpenDb(); await new Promise((resolve,reject)=>{const tx=db.transaction("sales","readwrite");tx.objectStore("sales").put(entry);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);}); }
+async function xQueueIdbDelete(ref) { try { const db=await xQueueOpenDb(); await new Promise((resolve,reject)=>{const tx=db.transaction("sales","readwrite");tx.objectStore("sales").delete(ref);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);}); } catch {} }
+async function xQueueReadAll() {
+  const local=xRead(XQ_KEY); let saved=[];
+  try { const db=await xQueueOpenDb(); saved=await new Promise((resolve,reject)=>{const tx=db.transaction("sales","readonly"),req=tx.objectStore("sales").getAll();req.onsuccess=()=>resolve(req.result||[]);req.onerror=()=>reject(req.error);}); } catch {}
+  const merged=new Map(); for(const item of saved)merged.set(item.ref,item); for(const item of local)merged.set(item.ref,item);
+  return [...merged.values()];
+}
+async function xQueueRemove(ref) { xWrite(XQ_KEY,xRead(XQ_KEY).filter(x=>x.ref!==ref)); await xQueueIdbDelete(ref); }
+
+async function xQueueAdd(ref, items, terminalId = typeof hardwareTerminalId === "function" ? hardwareTerminalId() : "", discountPercent = 0) {
   const q = xRead(XQ_KEY);
-  q.push({ ref, shop: String(activeShopId), items, at: new Date().toISOString() });
+  const entry = { ref, shop: String(activeShopId), items, terminalId, discountPercent: Number(discountPercent || 0), at: new Date().toISOString() };
+  q.push(entry);
   xWrite(XQ_KEY, q);
+  try { await xQueueIdbPut(entry); } catch {}
   const cache = xReadProductCache();   // keep the stock numbers honest while offline
   if (cache) {
     items.forEach(it => { const p = cache.find(x => x.id === it.product_id); if (p) p.quantity = Math.max(0, p.quantity - it.quantity); });
@@ -246,43 +268,43 @@ function xQueueAdd(ref, items) {
 let xSyncing = false;
 async function xSyncQueue() {
   if (xSyncing || !authToken || USE_SAMPLE_DATA) return;
-  const all = xRead(XQ_KEY);
-  const mine = all.filter(e => e.shop === String(activeShopId));
-  if (!mine.length) { xUpdatePill(); return; }
   xSyncing = true;
+  const all = await xQueueReadAll();
+  const mine = all.filter(e => e.shop === String(activeShopId));
+  if (!mine.length) { xSyncing = false; xUpdatePill(); return; }
   let synced = 0;
   try {
     for (const e of mine) {
       try {
-        const r = await Api.sellBatch(e.items, { method: "cash", ref: e.ref, clientTime: e.at });
-        xWrite(XQ_KEY, xRead(XQ_KEY).filter(x => x.ref !== e.ref));
+        const r = await Api.sellBatch(e.items, { method: "cash", ref: e.ref, clientTime: e.at, terminalId: e.terminalId || "", discountPercent: e.discountPercent || 0 });
+        await xQueueRemove(e.ref);
         synced++;
         if (r.failed && r.failed.length) xWrite(XQ_ISSUES, [...xRead(XQ_ISSUES), { at: e.at, items: e.items, why: r.failed.map(f => f.reason || "Not recorded").join("; ") }]);
       } catch (err) {
         if (xIsNetworkError(err) || err.status === 401 || /read only/i.test(err.message || "")) break;
-        xWrite(XQ_KEY, xRead(XQ_KEY).filter(x => x.ref !== e.ref));
+        await xQueueRemove(e.ref);
         xWrite(XQ_ISSUES, [...xRead(XQ_ISSUES), { at: e.at, items: e.items, why: err.message || "Rejected by the server" }]);
       }
     }
   } finally { xSyncing = false; xUpdatePill(); }
   if (synced) { toast(`${synced} offline sale${synced === 1 ? "" : "s"} synced`); render(); }
 }
-function xUpdatePill() {
+async function xUpdatePill() {
   let pill = document.getElementById("x-pill");
   if (!pill) {
     pill = document.createElement("button");
     pill.id = "x-pill"; pill.className = "x-pill hidden"; pill.onclick = xShowQueueSheet;
     document.body.appendChild(pill);
   }
-  const n = xRead(XQ_KEY).filter(e => e.shop === String(activeShopId)).length;
+  const n = (await xQueueReadAll()).filter(e => e.shop === String(activeShopId)).length;
   const bad = xRead(XQ_ISSUES).length;
   if (!authToken || (!n && !bad)) { pill.classList.add("hidden"); return; }
   pill.classList.remove("hidden");
   pill.classList.toggle("x-pill-bad", !!bad);
   pill.textContent = bad ? `${bad} sale${bad === 1 ? "" : "s"} need attention` : `${n} waiting to sync`;
 }
-function xShowQueueSheet() {
-  const q = xRead(XQ_KEY).filter(e => e.shop === String(activeShopId));
+async function xShowQueueSheet() {
+  const q = (await xQueueReadAll()).filter(e => e.shop === String(activeShopId));
   const issues = xRead(XQ_ISSUES);
   const line = e => `<div class="py-2 border-b border-black/5 last:border-0 text-sm"><div class="text-xs text-ink/45">${new Date(e.at).toLocaleString()}</div>${(e.items || []).map(i => `${i.quantity} x item ${i.product_id}`).join(", ")}${e.why ? `<div class="text-xs text-danger">${escapeHtml(e.why)}</div>` : ""}</div>`;
   posOpenSheet(`
@@ -296,12 +318,14 @@ function xShowQueueSheet() {
     </div>`);
 }
 // Called from confirmMultiSale when a cash sale cannot reach the server.
-function xOfflineCashSale(ref, items, snapshot) {
-  xQueueAdd(ref, items);
+async function xOfflineCashSale(ref, items, snapshot) {
+  await xQueueAdd(ref, items, typeof hardwareTerminalId === "function" ? hardwareTerminalId() : "", snapshot ? snapshot.discountPercent : 0);
+  if (typeof hardwareAfterCashSale === "function") await hardwareAfterCashSale({ succeeded: items }, ref);
   closeModal("multisale-modal");
   multiSaleCart = new Map();
   toast("No network. Sale saved on this phone, it will sync later.");
-  if (snapshot) posShowReceipt({ items: snapshot.items, total: snapshot.total, method: "cash", failed: [], time: Date.now(), sales: [], offline: true });
+  if (snapshot) posShowReceipt({ items: snapshot.items, subtotal: snapshot.subtotal, discount_total: snapshot.discountTotal || 0, total: snapshot.total, method: "cash", failed: [], time: Date.now(), sales: [], offline: true });
+  if (typeof hardwareDiscountPercent === "number") hardwareDiscountPercent = 0;
   render();
 }
 window.addEventListener("online", () => setTimeout(xSyncQueue, 800));

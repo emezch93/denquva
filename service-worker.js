@@ -1,12 +1,14 @@
-const CACHE_NAME = "denquva-shell-v35";
+const CACHE_NAME = "denquva-shell-v37";
 const RUNTIME_CACHE = "denquva-runtime-v5";
 const SHELL_FILES = [
   "./",
   "./index.html",
   "./css/app.css",
+  "./css/hardware-pos.css",
   "./css/tailwind.css",
   "./js/app.js",
   "./js/pos.js",
+  "./js/hardware-pos.js",
   "./js/reverse.js",
   "./js/extras.js",
   "./js/delivery.js",
