@@ -1317,7 +1317,7 @@ function buildBusinessInsights(products, weeklyTotals, generatedAt = new Date().
     const daysCover = dailyRate > 0 ? available / dailyRate : null;
 
     if (available <= threshold || (daysCover !== null && daysCover <= 14)) {
-      const target = Math.ceil(Math.max(threshold, dailyRate * 14));
+      const target = Math.ceil(Math.max(threshold + 1, dailyRate * 14));
       recommendations.push({
         type: "reorder", priority: available <= threshold ? "high" : "medium",
         product_id: product.id, product_name: name, available, low_stock_threshold: threshold,
@@ -1374,7 +1374,7 @@ function buildBusinessInsights(products, weeklyTotals, generatedAt = new Date().
     recommendations: recommendations.slice(0, 30),
     assumptions: [
       "Stock pace uses completed sales recorded in Denquva during the last 30 days.",
-      "Reorder quantity targets up to 14 days of sales or the saved low-stock threshold; it does not know supplier lead times.",
+      "Reorder quantity targets 14 days of sales or at least one unit above the saved low-stock threshold; it does not know supplier lead times.",
       "Sales momentum compares the last 7 days with the prior 7 days. These are signals to review, not predictions or automatic changes.",
       "All suggestions are read-only. Check reserved stock, supplier timing, discounts, and local context before acting.",
     ],
