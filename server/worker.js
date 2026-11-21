@@ -240,6 +240,11 @@ const innerWorker = {
         return json(await getDashboard(env, shopId), 200, request);
       }
 
+      // Read-only, deterministic shop recommendations. No provider calls or writes.
+      if (path === "/api/insights" && request.method === "GET") {
+        return json(await getBusinessInsights(env, shopId), 200, request);
+      }
+
       if (path === "/api/settings" && request.method === "GET") {
         return await getSettings(env, shopId, request);
       }
@@ -1294,6 +1299,107 @@ async function getDashboard(env, shopId) {
     recent_sales: recentSales,
     top_products: topProducts,
   };
+}
+
+function buildBusinessInsights(products, weeklyTotals, generatedAt = new Date().toISOString()) {
+  const recommendations = [];
+  const numeric = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+  const rows = Array.isArray(products) ? products : [];
+
+  for (const product of rows) {
+    const name = String(product.name || "Product");
+    const available = Math.max(0, numeric(product.quantity) - numeric(product.reserved_quantity));
+    const threshold = Math.max(0, numeric(product.low_stock_threshold));
+    const sold7 = Math.max(0, numeric(product.units_7));
+    const soldPrevious7 = Math.max(0, numeric(product.units_previous_7));
+    const sold30 = Math.max(0, numeric(product.units_30));
+    const dailyRate = sold30 / 30;
+    const daysCover = dailyRate > 0 ? available / dailyRate : null;
+
+    if (available <= threshold || (daysCover !== null && daysCover <= 14)) {
+      const target = Math.ceil(Math.max(threshold, dailyRate * 14));
+      recommendations.push({
+        type: "reorder", priority: available <= threshold ? "high" : "medium",
+        product_id: product.id, product_name: name, available, low_stock_threshold: threshold,
+        days_cover: daysCover === null ? null : Math.round(daysCover * 10) / 10,
+        suggested_reorder_quantity: Math.max(0, target - available),
+        message: daysCover === null
+          ? `${name}: ${available} available, at or below its saved low-stock threshold (${threshold}).`
+          : `${name}: about ${Math.round(daysCover)} days of stock remain at its 30-day sales pace.`,
+      });
+    }
+
+    if (sold7 >= 2 && sold7 >= soldPrevious7 * 1.5 && sold7 - soldPrevious7 >= 2) {
+      recommendations.push({
+        type: "sales_momentum", priority: "medium", product_id: product.id, product_name: name,
+        message: `${name} sold ${sold7} units in the last 7 days, up from ${soldPrevious7} in the previous 7 days.`,
+      });
+    }
+
+    if (available > 0 && sold30 === 0) {
+      recommendations.push({
+        type: "slow_moving", priority: "low", product_id: product.id, product_name: name,
+        available,
+        message: `${name} has ${available} available and no recorded sales in the last 30 days.`,
+      });
+    }
+
+    const price = numeric(product.selling_price);
+    const cost = numeric(product.cost_price);
+    if (price <= 0 || (cost > 0 && price <= cost)) {
+      recommendations.push({
+        type: "margin_check", priority: "high", product_id: product.id, product_name: name,
+        selling_price: price, cost_price: cost,
+        message: price <= 0
+          ? `${name} has no positive selling price saved.`
+          : `${name}'s saved selling price is at or below its unit cost; discounts may reduce its margin further.`,
+      });
+    }
+  }
+
+  const current = Math.max(0, numeric(weeklyTotals?.current_revenue));
+  const previous = Math.max(0, numeric(weeklyTotals?.previous_revenue));
+  const changePercent = previous > 0 ? Math.round(((current - previous) / previous) * 100) : null;
+  recommendations.sort((a, b) => {
+    const rank = { high: 0, medium: 1, low: 2 };
+    return rank[a.priority] - rank[b.priority] || (a.days_cover ?? 99999) - (b.days_cover ?? 99999);
+  });
+
+  return {
+    generated_at: generatedAt,
+    sales_last_7_days: current,
+    sales_previous_7_days: previous,
+    sales_change_percent: changePercent,
+    recommendation_count: recommendations.length,
+    recommendations: recommendations.slice(0, 30),
+    assumptions: [
+      "Stock pace uses completed sales recorded in Denquva during the last 30 days.",
+      "Reorder quantity targets up to 14 days of sales or the saved low-stock threshold; it does not know supplier lead times.",
+      "Sales momentum compares the last 7 days with the prior 7 days. These are signals to review, not predictions or automatic changes.",
+      "All suggestions are read-only. Check reserved stock, supplier timing, discounts, and local context before acting.",
+    ],
+  };
+}
+
+async function getBusinessInsights(env, shopId) {
+  const { results: products } = await env.DB.prepare(
+    `SELECT p.id, p.name, p.quantity, p.reserved_quantity, p.low_stock_threshold,
+            p.selling_price, p.cost_price,
+            COALESCE(SUM(CASE WHEN date(s.sold_at) >= date('now', '-6 days') THEN s.quantity ELSE 0 END), 0) AS units_7,
+            COALESCE(SUM(CASE WHEN date(s.sold_at) >= date('now', '-13 days') AND date(s.sold_at) < date('now', '-6 days') THEN s.quantity ELSE 0 END), 0) AS units_previous_7,
+            COALESCE(SUM(CASE WHEN date(s.sold_at) >= date('now', '-29 days') THEN s.quantity ELSE 0 END), 0) AS units_30
+       FROM products p
+       LEFT JOIN sales s ON s.product_id = p.id AND s.shop_id = p.shop_id
+          AND date(s.sold_at) >= date('now', '-29 days')
+      WHERE p.shop_id = ? AND p.is_archived = 0
+      GROUP BY p.id ORDER BY p.name COLLATE NOCASE LIMIT 2000`
+  ).bind(shopId).all();
+  const totals = await env.DB.prepare(
+    `SELECT COALESCE(SUM(CASE WHEN date(sold_at) >= date('now', '-6 days') THEN total_amount ELSE 0 END), 0) AS current_revenue,
+            COALESCE(SUM(CASE WHEN date(sold_at) >= date('now', '-13 days') AND date(sold_at) < date('now', '-6 days') THEN total_amount ELSE 0 END), 0) AS previous_revenue
+       FROM sales WHERE shop_id = ? AND date(sold_at) >= date('now', '-13 days')`
+  ).bind(shopId).first();
+  return buildBusinessInsights(products || [], totals || {});
 }
 
 async function getSettings(env, shopId, request) {
