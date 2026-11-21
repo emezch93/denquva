@@ -593,6 +593,17 @@ const Api = {
     return apiJson(res);
   },
 
+  async getInsights() {
+    if (USE_SAMPLE_DATA) return null;
+    try {
+      const res = await authFetch(`${API_BASE}/api/insights`);
+      return await apiJson(res);
+    } catch (err) {
+      console.warn("Business insights unavailable:", err && err.message);
+      return null;
+    }
+  },
+
   async askAI(question, attachment) {
     if (USE_SAMPLE_DATA) {
       return { answer: "The AI assistant will answer using your real sales data once the Worker and AI key are connected. For now this is sample mode." };
@@ -1581,7 +1592,7 @@ function saleRowHtml(s) {
 }
 
 async function ViewDashboard() {
-  const d = await Api.getDashboard();
+  const [d, insights] = await Promise.all([Api.getDashboard(), Api.getInsights()]);
   lastRenderedSales = d.recent_sales;
   const stat = (label, value) => `
     <div class="stat-card">
@@ -1613,6 +1624,7 @@ async function ViewDashboard() {
       ${stat("Today's Sales", d.today_sales_count)}
       ${stat("Today's Revenue", formatMoney(d.today_revenue))}
     </div>
+    ${businessInsightsCardHtml(insights)}
     <div class="card p-4 mb-5">
       <h2 class="font-display font-bold mb-1">Low Stock</h2>
       ${lowStockHtml}
@@ -1625,6 +1637,31 @@ async function ViewDashboard() {
       ${recentHtml}
     </div>
   `;
+}
+
+function businessInsightsCardHtml(insights) {
+  if (!insights) return "";
+  const trend = insights.sales_change_percent === null
+    ? "Not enough prior sales for a comparison"
+    : `${insights.sales_change_percent > 0 ? "+" : ""}${insights.sales_change_percent}% vs previous 7 days`;
+  const items = (insights.recommendations || []).slice(0, 8);
+  const rows = items.length ? items.map(item => `
+    <li class="py-2.5 border-b border-black/5 last:border-0">
+      <div class="flex items-start justify-between gap-3">
+        <span class="text-sm">${escapeHtml(item.message)}</span>
+        ${item.type === "reorder" && item.suggested_reorder_quantity > 0
+          ? `<span class="shrink-0 text-xs font-semibold text-primary-dark bg-primary-light px-2 py-1 rounded-full">Review ${item.suggested_reorder_quantity} to reorder</span>` : ""}
+      </div>
+    </li>`).join("") : `<li class="text-sm text-ink/45 py-3">No suggestions from recent sales and stock data.</li>`;
+  return `
+    <section class="card p-4 mb-5" aria-label="Read-only business insights">
+      <div class="flex items-start justify-between gap-3 mb-1">
+        <div><h2 class="font-display font-bold">Business insights</h2><p class="text-xs text-ink/50 mt-1">Read-only checks from your saved sales and stock</p></div>
+        <span class="text-xs font-semibold text-primary-dark bg-primary-light px-2 py-1 rounded-full">${escapeHtml(trend)}</span>
+      </div>
+      <ul>${rows}</ul>
+      <p class="text-xs text-ink/40 mt-3">Stock suggestions use a 14-day target or your low-stock threshold. Supplier lead times and future demand can differ; review before reordering. Nothing changes automatically.</p>
+    </section>`;
 }
 
 // ---------------- PRODUCTS VIEW ----------------
