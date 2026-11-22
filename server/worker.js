@@ -921,6 +921,10 @@ async function sellBatch(env, request, shopId) {
   const discountPercent = Number(body.discount_percent || 0);
   if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100) return error("The discount percent is not valid", 400, request);
   if (discountPercent > 0 && request.headers.get("X-Denquva-Sale-Role") !== "owner") return error("Only the owner can apply a sale discount", 403, request);
+  if (String(request.headers.get("X-Payment-Method") || "").toLowerCase() === "mixed") {
+    try { return await sellMixedBatch(env, request, shopId, items, discountPercent, body.payments); }
+    catch (e) { if (e.status && e.status >= 500) throw e; return error(e.message || "Could not record split payment", e.status || 400, request); }
+  }
   const succeeded = [];
   const failed = [];
   let totalAmount = 0;
@@ -940,6 +944,70 @@ async function sellBatch(env, request, shopId) {
   }
 
   return json({ succeeded, failed, total_amount: totalAmount, total_profit: totalProfit, discount_total: totalDiscount }, 201, request);
+}
+
+// Split transfer + cash checkout is committed as one D1 batch: stock and all
+// sale rows either succeed together or roll back together. Tenders are checked
+// in integer cents and allocated back to sale rows for accurate reconciliation.
+async function sellMixedBatch(env, request, shopId, items, discountPercent, payments) {
+  if (!Array.isArray(payments) || payments.length !== 2) throw Object.assign(new Error("Provide one transfer amount and one cash amount."), { status: 400 });
+  const tender = new Map();
+  for (const payment of payments) {
+    const method = String(payment?.method || "").toLowerCase();
+    const cents = Math.round(Number(payment?.amount) * 100);
+    if (!["cash", "transfer"].includes(method) || !Number.isFinite(Number(payment?.amount)) || cents <= 0 || tender.has(method)) throw Object.assign(new Error("Split payment must contain positive cash and transfer amounts."), { status: 400 });
+    tender.set(method, cents);
+  }
+  if (!tender.has("cash") || !tender.has("transfer")) throw Object.assign(new Error("Split payment must contain cash and transfer."), { status: 400 });
+  const seen = new Set(), lines = [];
+  let totalCents = 0, discountCentsTotal = 0, profitTotal = 0;
+  for (const item of items) {
+    const productId = Number(item?.product_id), quantity = Number(item?.quantity);
+    if (!Number.isSafeInteger(productId) || productId <= 0 || !Number.isSafeInteger(quantity) || quantity <= 0) throw Object.assign(new Error("Each product needs a valid ID and positive whole-number quantity."), { status: 400 });
+    if (seen.has(productId)) throw Object.assign(new Error("Each product can appear only once in a split checkout."), { status: 400 });
+    seen.add(productId);
+    const product = await env.DB.prepare("SELECT * FROM products WHERE id=? AND shop_id=? AND is_archived=0").bind(productId, shopId).first();
+    if (!product) throw Object.assign(new Error("A selected product is no longer available."), { status: 409 });
+    const available = Number(product.quantity) - Number(product.reserved_quantity || 0);
+    if (available < quantity) throw Object.assign(new Error(`Only ${Math.max(0, available)} units of ${product.name} are available.`), { status: 409 });
+    const subtotalCents = Math.round(Number(product.selling_price) * 100) * quantity;
+    const discountCents = Math.round(subtotalCents * discountPercent / 100);
+    const lineCents = subtotalCents - discountCents;
+    if (lineCents <= 0) throw Object.assign(new Error("A discounted sale must have a positive total."), { status: 400 });
+    lines.push({ product, quantity, subtotalCents, discountCents, lineCents, profit: lineCents / 100 - Number(product.cost_price || 0) * quantity });
+    totalCents += lineCents; discountCentsTotal += discountCents; profitTotal += lines.at(-1).profit;
+  }
+  if (tender.get("cash") + tender.get("transfer") !== totalCents) throw Object.assign(new Error(`Cash and transfer must add up to the checkout total (${(totalCents / 100).toFixed(2)}).`), { status: 400 });
+  const terminalId = cleanTerminalId(request.headers.get("X-Denquva-Terminal-Id"));
+  const statements = [], assertionKeys = [];
+  for (const line of lines) {
+    const assertionKey = crypto.randomUUID(); assertionKeys.push(assertionKey);
+    statements.push(env.DB.prepare("UPDATE products SET quantity=quantity-?, updated_at=datetime('now') WHERE id=? AND shop_id=? AND is_archived=0 AND quantity-reserved_quantity>=?").bind(line.quantity, line.product.id, shopId, line.quantity));
+    statements.push(env.DB.prepare("INSERT INTO delivery_transaction_assertions (assertion_key,ok) VALUES (?,changes())").bind(assertionKey));
+    statements.push(env.DB.prepare(`INSERT INTO sales (shop_id,product_id,product_name,quantity,unit_price,unit_cost,total_amount,estimated_profit,terminal_id,subtotal_amount,discount_amount,payment_method) VALUES (?,?,?,?,?,?,?,?,?,?,?,'mixed')`).bind(shopId, line.product.id, line.product.name, line.quantity, line.lineCents / 100 / line.quantity, line.product.cost_price || 0, line.lineCents / 100, line.profit, terminalId, line.subtotalCents / 100, line.discountCents / 100));
+    statements.push(env.DB.prepare(`INSERT INTO stock_movements (shop_id,product_id,change_type,quantity_change,resulting_quantity,note) SELECT ?,id,'sale',?,quantity,'Mixed payment sale' FROM products WHERE id=? AND shop_id=?`).bind(shopId, -line.quantity, line.product.id, shopId));
+  }
+  if (assertionKeys.length) statements.push(env.DB.prepare(`DELETE FROM delivery_transaction_assertions WHERE assertion_key IN (${assertionKeys.map(() => "?").join(",")})`).bind(...assertionKeys));
+  let results;
+  try { results = await env.DB.batch(statements); }
+  catch (e) {
+    const failed = await env.DB.prepare("SELECT name, quantity, reserved_quantity FROM products WHERE shop_id=? AND id IN (" + lines.map(() => "?").join(",") + ")").bind(shopId, ...lines.map(x => x.product.id)).all();
+    const low = (failed.results || []).find(p => Number(p.quantity) - Number(p.reserved_quantity || 0) < (lines.find(l => l.product.id === p.id)?.quantity || 0));
+    if (low) throw Object.assign(new Error(`Only ${Math.max(0, Number(low.quantity) - Number(low.reserved_quantity || 0))} units of ${low.name} are available.`), { status: 409 });
+    throw e;
+  }
+  let transferLeft = tender.get("transfer");
+  const succeeded = [], payment_allocations = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i], saleId = results[i * 4 + 2]?.meta?.last_row_id;
+    const current = await env.DB.prepare("SELECT quantity FROM products WHERE id=? AND shop_id=?").bind(line.product.id, shopId).first();
+    const transfer = Math.min(transferLeft, line.lineCents); transferLeft -= transfer;
+    const cash = line.lineCents - transfer;
+    if (transfer) payment_allocations.push({ sale_id: saleId, method: "transfer", amount: transfer / 100 });
+    if (cash) payment_allocations.push({ sale_id: saleId, method: "cash", amount: cash / 100 });
+    succeeded.push({ sale_id: saleId, product_id: line.product.id, product_name: line.product.name, quantity: line.quantity, new_quantity: current?.quantity, total_amount: line.lineCents / 100, subtotal_amount: line.subtotalCents / 100, discount_amount: line.discountCents / 100, estimated_profit: line.profit });
+  }
+  return json({ succeeded, failed: [], total_amount: totalCents / 100, total_profit: Math.round(profitTotal * 100) / 100, discount_total: discountCentsTotal / 100, payment_allocations }, 201, request);
 }
 
 
@@ -3195,7 +3263,7 @@ function xWithCors(request, res) {
 }
 const xNow = () => new Date().toISOString();
 const xNum = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const X_METHODS = ["cash", "card", "transfer"];
+const X_METHODS = ["cash", "card", "transfer", "mixed"];
 const xMethod = m => (X_METHODS.includes(String(m || "").toLowerCase()) ? String(m).toLowerCase() : "cash");
 const xIsoFromSql = s => (s ? (String(s).includes("T") ? String(s) : String(s).replace(" ", "T") + "Z") : null);
 
@@ -3536,9 +3604,10 @@ async function xHandle(inner, request, env, ctx, url) {
     const ct = Date.parse(request.headers.get("X-Client-Time") || "");
     if (ct && ct <= Date.now() && ct > Date.now() - 3 * 86400000) at = new Date(ct).toISOString();
     const rows = [];
-    if (path === "/api/sales/batch") (out.succeeded || []).forEach(s => rows.push({ id: s.sale_id, amt: xNum(s.total_amount) }));
-    else rows.push({ id: out.sale_id, amt: xNum(out.total_amount) });
-    const stmts = rows.filter(r => r.id != null).map(r => DB.prepare(`INSERT INTO x_sale_pay (shop_id, sale_id, method, amount, actor, at) VALUES (?,?,?,?,?,?)`).bind(w.shopId, r.id, mName, r.amt, w.actor, at));
+    if (path === "/api/sales/batch" && Array.isArray(out.payment_allocations)) out.payment_allocations.forEach(p => rows.push({ id: p.sale_id, method: xMethod(p.method), amt: xNum(p.amount) }));
+    else if (path === "/api/sales/batch") (out.succeeded || []).forEach(s => rows.push({ id: s.sale_id, method: mName, amt: xNum(s.total_amount) }));
+    else rows.push({ id: out.sale_id, method: mName, amt: xNum(out.total_amount) });
+    const stmts = rows.filter(r => r.id != null).map(r => DB.prepare(`INSERT INTO x_sale_pay (shop_id, sale_id, method, amount, actor, at) VALUES (?,?,?,?,?,?)`).bind(w.shopId, r.id, r.method, r.amt, w.actor, at));
     if (ref) stmts.push(DB.prepare(`INSERT OR IGNORE INTO x_refs (shop_id, ref, body, at) VALUES (?,?,?,?)`).bind(w.shopId, ref, text, xNow()));
     if (stmts.length) await DB.batch(stmts);
     await audit(w, "Sale", `${mName} ${rows.reduce((n, r) => n + r.amt, 0)}${ref ? " (offline)" : ""}`);
@@ -3904,8 +3973,8 @@ async function xRoutes(c) {
     const closingCash = Number(body.closing_cash);
     if (!Number.isFinite(closingCash) || closingCash < 0 || closingCash > 1000000000) return xJson({ error: "Enter a valid counted cash amount." }, 400);
     const closedAt = xNow();
-    const cashIn = await first("SELECT COALESCE(SUM(total_amount),0) amount FROM sales WHERE shop_id=? AND terminal_id=? AND payment_method='cash' AND julianday(sold_at)>=julianday(?) AND julianday(sold_at)<=julianday(?)", shift.shop_id, shift.terminal_id, shift.opened_at, closedAt);
-    const cashOut = await first("SELECT COALESCE(SUM(total_amount),0) amount FROM sale_reversals WHERE shop_id=? AND terminal_id=? AND payment_method='cash' AND julianday(reversed_at)>=julianday(?) AND julianday(reversed_at)<=julianday(?)", shift.shop_id, shift.terminal_id, shift.opened_at, closedAt);
+    const cashIn = await first(`SELECT COALESCE(SUM(CASE WHEN EXISTS(SELECT 1 FROM x_sale_pay p WHERE p.shop_id=s.shop_id AND p.sale_id=s.id) THEN (SELECT COALESCE(SUM(p.amount),0) FROM x_sale_pay p WHERE p.shop_id=s.shop_id AND p.sale_id=s.id AND p.method='cash') WHEN s.payment_method='cash' THEN s.total_amount ELSE 0 END),0) amount FROM sales s WHERE s.shop_id=? AND s.terminal_id=? AND julianday(s.sold_at)>=julianday(?) AND julianday(s.sold_at)<=julianday(?)`, shift.shop_id, shift.terminal_id, shift.opened_at, closedAt);
+    const cashOut = await first(`SELECT COALESCE(SUM(CASE WHEN EXISTS(SELECT 1 FROM x_sale_pay p WHERE p.shop_id=r.shop_id AND p.sale_id=r.sale_id AND p.reversed_at IS NOT NULL) THEN (SELECT COALESCE(SUM(p.amount),0) FROM x_sale_pay p WHERE p.shop_id=r.shop_id AND p.sale_id=r.sale_id AND p.method='cash' AND p.reversed_at IS NOT NULL AND julianday(p.reversed_at)>=julianday(?) AND julianday(p.reversed_at)<=julianday(?)) WHEN r.payment_method='cash' THEN r.total_amount ELSE 0 END),0) amount FROM sale_reversals r WHERE r.shop_id=? AND r.terminal_id=? AND julianday(r.reversed_at)>=julianday(?) AND julianday(r.reversed_at)<=julianday(?)`, shift.opened_at, closedAt, shift.shop_id, shift.terminal_id, shift.opened_at, closedAt);
     const expectedCash = Math.round((Number(shift.opening_cash || 0) + Number(cashIn?.amount || 0) - Number(cashOut?.amount || 0)) * 100) / 100;
     const variance = Math.round((closingCash - expectedCash) * 100) / 100;
     const result = await run("UPDATE pos_shifts SET status='closed', closing_cash=?, expected_cash=?, variance=?, closed_at=?, note=? WHERE id=? AND shop_id=? AND status='open'", Math.round(closingCash * 100) / 100, expectedCash, variance, closedAt, String(body.note || "").trim().slice(0, 240), id, shift.shop_id);
@@ -4724,3 +4793,4 @@ async function deliveryEasyPostWebhook(request, env) {
 }
 
 export default withExtras(innerWorker);
+

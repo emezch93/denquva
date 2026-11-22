@@ -369,6 +369,12 @@ const Api = {
   // mode exactly as the backend batch endpoint behaves for real.
   async sellBatch(items, opts = {}) {
     if (USE_SAMPLE_DATA) {
+      if (opts.method === "mixed") {
+        const invalid = items.some(item => { const p = sampleProducts.find(x => x.id === item.product_id); return !p || p.quantity < item.quantity; });
+        const dueCents = items.reduce((n, item) => { const p = sampleProducts.find(x => x.id === item.product_id); return n + (p ? Math.round(Math.round(p.selling_price * 100) * item.quantity * (100 - Number(opts.discountPercent || 0)) / 100) : 0); }, 0);
+        const tenderCents = (opts.payments || []).reduce((n, p) => n + Math.round(Number(p.amount) * 100), 0);
+        if (invalid || tenderCents !== dueCents) throw new Error("Split payment does not match the sale total or stock is unavailable.");
+      }
       const succeeded = [];
       const failed = [];
       let totalAmount = 0;
@@ -386,7 +392,7 @@ const Api = {
         sampleSales.unshift({
           id: nextSaleId++, product_id: p.id, product_name: p.name, quantity: item.quantity,
           unit_price: p.selling_price, unit_cost: p.cost_price,
-          total_amount: itemAmount, subtotal_amount: itemSubtotal, discount_amount: discountAmount, estimated_profit: itemProfit, sold_at: new Date().toISOString(),
+          total_amount: itemAmount, subtotal_amount: itemSubtotal, discount_amount: discountAmount, estimated_profit: itemProfit, payment_method: opts.method || "cash", sold_at: new Date().toISOString(),
         });
         succeeded.push({ product_id: p.id, product_name: p.name, quantity: item.quantity, new_quantity: p.quantity, total_amount: itemAmount, estimated_profit: itemProfit });
         totalAmount += itemAmount;
@@ -408,7 +414,7 @@ const Api = {
     }
     const res = await authFetch(`${API_BASE}/api/sales/batch`, {
       method: "POST", headers, signal,
-      body: JSON.stringify({ items, discount_percent: Number(opts.discountPercent || 0) }),
+      body: JSON.stringify({ items, discount_percent: Number(opts.discountPercent || 0), payments: opts.payments || undefined }),
     });
     return apiJson(res);
   },
@@ -4120,3 +4126,4 @@ if (!navigator.onLine) document.getElementById("offline-pill").classList.remove(
 
 render();
 warmLibsWhenIdle();
+

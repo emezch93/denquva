@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 
 const root = new URL("../", import.meta.url);
 const text = async (path) => fs.readFile(new URL(path, root), "utf8");
-const worker = await text("worker.js");
+const worker = await text("server/worker.js");
 const migration = await text("migrations/hardware-pos.sql");
 const terminalBlock = worker.slice(worker.indexOf("function cleanTerminalId"), worker.indexOf("async function performSale"));
 const workerContext = vm.createContext({});
@@ -32,10 +32,17 @@ db.prepare("INSERT INTO pos_shifts(id,shop_id,terminal_id,actor,role,opening_cas
 assert.throws(() => db.prepare("INSERT INTO pos_shifts(id,shop_id,terminal_id,actor,role,opening_cash,status,opened_at) VALUES(?,?,?,?,?,?,?,?)").run("s2",12,"dq_0123456789abcdef","Staff","staff",0,"open",opened), /UNIQUE/);
 db.prepare("INSERT INTO sales(shop_id,product_id,product_name,quantity,unit_price,unit_cost,total_amount,estimated_profit,sold_at,terminal_id,payment_method) VALUES(12,1,'Cash',1,20,10,20,10,?,?,?)").run("2026-11-20 11:00:00", "dq_0123456789abcdef", "cash");
 db.prepare("INSERT INTO sales(shop_id,product_id,product_name,quantity,unit_price,unit_cost,total_amount,estimated_profit,sold_at,terminal_id,payment_method) VALUES(12,2,'Card',1,50,25,50,25,?,?,?)").run("2026-11-20 11:00:00", "dq_0123456789abcdef", "card");
+db.exec("CREATE TABLE x_sale_pay(id INTEGER PRIMARY KEY AUTOINCREMENT,shop_id INTEGER,sale_id INTEGER,method TEXT,amount REAL,actor TEXT,at TEXT,reversed_at TEXT)");
+db.prepare("INSERT INTO sales(shop_id,product_id,product_name,quantity,unit_price,unit_cost,total_amount,estimated_profit,sold_at,terminal_id,payment_method) VALUES(12,3,'Mixed',1,60,30,60,30,?,?,?)").run("2026-11-20 11:30:00", "dq_0123456789abcdef", "mixed");
+db.prepare("INSERT INTO x_sale_pay(shop_id,sale_id,method,amount,at) VALUES(12,3,'transfer',45,'2026-11-20 11:30:00'),(12,3,'cash',15,'2026-11-20 11:30:00')").run();
 db.prepare("INSERT INTO sale_reversals(shop_id,sale_id,product_id,product_name,quantity,unit_price,unit_cost,total_amount,estimated_profit,sold_at,restocked,reason,reversed_at,terminal_id,payment_method) VALUES(12,1,1,'Cash',1,20,10,5,2.5,?,1,'partial cash refund',?,?,?)").run("2026-11-20 11:00:00", "2026-11-20 12:00:00", "dq_0123456789abcdef", "cash");
-const cashIn = db.prepare("SELECT COALESCE(SUM(total_amount),0) amount FROM sales WHERE shop_id=? AND terminal_id=? AND payment_method='cash' AND julianday(sold_at)>=julianday(?) AND julianday(sold_at)<=julianday(?)").get(12,"dq_0123456789abcdef",opened,closed).amount;
-const cashOut = db.prepare("SELECT COALESCE(SUM(total_amount),0) amount FROM sale_reversals WHERE shop_id=? AND terminal_id=? AND payment_method='cash' AND julianday(reversed_at)>=julianday(?) AND julianday(reversed_at)<=julianday(?)").get(12,"dq_0123456789abcdef",opened,closed).amount;
-assert.equal(100+cashIn-cashOut,115,"shift expected cash includes only cash tenders and reversals");
+db.prepare("INSERT INTO sale_reversals(shop_id,sale_id,product_id,product_name,quantity,unit_price,unit_cost,total_amount,estimated_profit,sold_at,restocked,reason,reversed_at,terminal_id,payment_method) VALUES(12,3,3,'Mixed',1,60,30,60,30,?,1,'mixed refund',?,?,?)").run("2026-11-20 11:30:00", "2026-11-20 13:00:00", "dq_0123456789abcdef", "mixed");
+db.prepare("UPDATE x_sale_pay SET reversed_at='2026-11-20 13:00:00' WHERE shop_id=12 AND sale_id=3").run();
+const cashIn = db.prepare("SELECT COALESCE(SUM(CASE WHEN EXISTS(SELECT 1 FROM x_sale_pay p WHERE p.shop_id=s.shop_id AND p.sale_id=s.id) THEN (SELECT COALESCE(SUM(p.amount),0) FROM x_sale_pay p WHERE p.shop_id=s.shop_id AND p.sale_id=s.id AND p.method='cash') WHEN s.payment_method='cash' THEN s.total_amount ELSE 0 END),0) amount FROM sales s WHERE s.shop_id=? AND s.terminal_id=? AND julianday(s.sold_at)>=julianday(?) AND julianday(s.sold_at)<=julianday(?)").get(12,"dq_0123456789abcdef",opened,closed).amount;
+const cashOut = db.prepare("SELECT COALESCE(SUM(CASE WHEN EXISTS(SELECT 1 FROM x_sale_pay p WHERE p.shop_id=r.shop_id AND p.sale_id=r.sale_id AND p.reversed_at IS NOT NULL) THEN (SELECT COALESCE(SUM(p.amount),0) FROM x_sale_pay p WHERE p.shop_id=r.shop_id AND p.sale_id=r.sale_id AND p.method='cash' AND p.reversed_at IS NOT NULL AND julianday(p.reversed_at)>=julianday(?) AND julianday(p.reversed_at)<=julianday(?)) WHEN r.payment_method='cash' THEN r.total_amount ELSE 0 END),0) amount FROM sale_reversals r WHERE r.shop_id=? AND r.terminal_id=? AND julianday(r.reversed_at)>=julianday(?) AND julianday(r.reversed_at)<=julianday(?)").get(opened,closed,12,"dq_0123456789abcdef",opened,closed).amount;
+assert.equal(cashIn,35,"mixed checkout adds only its cash portion to the drawer");
+assert.equal(cashOut,20,"mixed reversal removes only its cash portion; legacy cash fallback remains");
+assert.equal(100+cashIn-cashOut,115,"shift expected cash uses cash tender portions only");
 db.close();
 
 const workerDb = new DatabaseSync(":memory:");
@@ -68,6 +75,20 @@ assert.equal(recorded.discount_amount,30);
 assert.equal(recorded.payment_method,"cash");
 assert.equal(recorded.subtotal_amount,300);
 await assert.rejects(vm.runInContext('performSale(env,99,7,1,"dq_0123456789abcdef")', saleContext), /Product not found/,"shop isolation is preserved");
+const mixedStart = worker.indexOf("async function sellMixedBatch"), mixedEnd = worker.indexOf("// ==================== REVERSE A SALE", mixedStart);
+const mixedRequest = { headers:{ get(name){ return name === "X-Denquva-Terminal-Id" ? "dq_0123456789abcdef" : null; } } };
+const mixedContext = vm.createContext({ crypto:webcrypto, env:{DB:d1}, json:(body)=>body, mixedRequest, cleanTerminalId:(value)=>value });
+vm.runInContext(worker.slice(mixedStart, mixedEnd), mixedContext);
+const mixed = await vm.runInContext('sellMixedBatch(env,mixedRequest,12,[{product_id:7,quantity:1}],0,[{method:"transfer",amount:100},{method:"cash",amount:50}])', mixedContext);
+assert.equal(mixed.total_amount,150);
+assert.equal(mixed.payment_allocations.reduce((n,p)=>n+p.amount,0),150,"allocated tenders equal sale total");
+assert.deepEqual(Array.from(mixed.payment_allocations,p=>p.method).sort(),["cash","transfer"]);
+assert.equal(workerDb.prepare("SELECT payment_method FROM sales WHERE id=?").get(mixed.succeeded[0].sale_id).payment_method,"mixed");
+const beforeInvalid=workerDb.prepare("SELECT quantity FROM products WHERE id=7").get().quantity;
+await assert.rejects(vm.runInContext('sellMixedBatch(env,mixedRequest,12,[{product_id:7,quantity:1}],0,[{method:"transfer",amount:149},{method:"cash",amount:2}])', mixedContext),/add up to the checkout total/);
+assert.equal(workerDb.prepare("SELECT quantity FROM products WHERE id=7").get().quantity,beforeInvalid,"invalid tender does not change stock");
+await assert.rejects(vm.runInContext('sellMixedBatch(env,mixedRequest,12,[{product_id:7,quantity:999}],0,[{method:"transfer",amount:100},{method:"cash",amount:149900}])', mixedContext),/available/);
+assert.equal(workerDb.prepare("SELECT quantity FROM products WHERE id=7").get().quantity,beforeInvalid,"unavailable stock does not create a partial split sale");
 workerDb.close();
 const source = await text("js/hardware-pos.js");
 const values = new Map();
@@ -135,4 +156,5 @@ console.log("PASS: Worker sale applies owner-approved discount to revenue and pr
 console.log("PASS: barcode quantity, unknown barcode quick-add, and escaped product rendering");
 console.log("PASS: thermal receipt content and serial transmission mock");
 console.log("PASS: printer disconnect cleanup");
+
 

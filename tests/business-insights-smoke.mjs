@@ -13,7 +13,7 @@ assert.match(worker, /WHERE p\.shop_id = \? AND p\.is_archived = 0/);
 assert.match(worker, /LIMIT 2000/);
 assert.match(app, /async getInsights\(\)/);
 assert.match(app, /Nothing changes automatically/);
-assert.match(serviceWorker, /denquva-shell-v40/);
+assert.match(serviceWorker, /denquva-shell-v41/);
 
 const start = worker.indexOf("function buildBusinessInsights(");
 const end = worker.indexOf("async function getBusinessInsights(", start);
@@ -38,6 +38,8 @@ assert.ok(result.recommendations.some(x => x.type === "reorder" && x.product_id 
 assert.ok(result.assumptions.length >= 3);
 assert.ok(result.recommendations.length <= 30);
 
+// Execute the Worker SQL against a temporary SQLite database using the exact
+// statements from getBusinessInsights, with no production data or writes.
 const database = new DatabaseSync(":memory:");
 database.exec(`
   CREATE TABLE products (
@@ -68,3 +70,4 @@ assert.equal(totals.current_revenue, 60);
 assert.equal(totals.previous_revenue, 40);
 database.close();
 console.log("Business insights smoke checks passed.");
+
