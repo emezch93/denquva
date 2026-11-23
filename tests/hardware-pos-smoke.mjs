@@ -79,17 +79,40 @@ const mixedStart = worker.indexOf("async function sellMixedBatch"), mixedEnd = w
 const mixedRequest = { headers:{ get(name){ return name === "X-Denquva-Terminal-Id" ? "dq_0123456789abcdef" : null; } } };
 const mixedContext = vm.createContext({ crypto:webcrypto, env:{DB:d1}, json:(body)=>body, mixedRequest, cleanTerminalId:(value)=>value });
 vm.runInContext(worker.slice(mixedStart, mixedEnd), mixedContext);
-const mixed = await vm.runInContext('sellMixedBatch(env,mixedRequest,12,[{product_id:7,quantity:1}],0,[{method:"transfer",amount:100},{method:"cash",amount:50}])', mixedContext);
+const mixed = await vm.runInContext('sellMixedBatch(env,mixedRequest,12,[{product_id:7,quantity:1}],0,[{method:"card",amount:60},{method:"transfer",amount:50},{method:"cash",amount:40}])', mixedContext);
 assert.equal(mixed.total_amount,150);
 assert.equal(mixed.payment_allocations.reduce((n,p)=>n+p.amount,0),150,"allocated tenders equal sale total");
-assert.deepEqual(Array.from(mixed.payment_allocations,p=>p.method).sort(),["cash","transfer"]);
+assert.deepEqual(Array.from(mixed.payment_allocations,p=>p.method).sort(),["card","cash","transfer"]);
 assert.equal(workerDb.prepare("SELECT payment_method FROM sales WHERE id=?").get(mixed.succeeded[0].sale_id).payment_method,"mixed");
 const beforeInvalid=workerDb.prepare("SELECT quantity FROM products WHERE id=7").get().quantity;
-await assert.rejects(vm.runInContext('sellMixedBatch(env,mixedRequest,12,[{product_id:7,quantity:1}],0,[{method:"transfer",amount:149},{method:"cash",amount:2}])', mixedContext),/add up to the checkout total/);
+await assert.rejects(vm.runInContext('sellMixedBatch(env,mixedRequest,12,[{product_id:7,quantity:1}],0,[{method:"transfer",amount:149},{method:"cash",amount:2}])', mixedContext),/amounts must add up to the checkout total/);
+await assert.rejects(vm.runInContext('sellMixedBatch(env,mixedRequest,12,[{product_id:7,quantity:1}],0,[{method:"cash",amount:75},{method:"cash",amount:75}])', mixedContext),/without duplicates/);
 assert.equal(workerDb.prepare("SELECT quantity FROM products WHERE id=7").get().quantity,beforeInvalid,"invalid tender does not change stock");
 await assert.rejects(vm.runInContext('sellMixedBatch(env,mixedRequest,12,[{product_id:7,quantity:999}],0,[{method:"transfer",amount:100},{method:"cash",amount:149900}])', mixedContext),/available/);
 assert.equal(workerDb.prepare("SELECT quantity FROM products WHERE id=7").get().quantity,beforeInvalid,"unavailable stock does not create a partial split sale");
 workerDb.close();
+const posSource = await text("js/pos.js");
+assert.match(posSource, /methodBtn\("mixed", "Mixed"/);
+assert.match(posSource, /\[\["card","POS amount"\],\["transfer","Transfer amount"\],\["cash","Cash amount"\]\]/);
+assert.match(posSource, /I confirmed the POS payment completed on the terminal/);
+const mixedUiStart=posSource.indexOf("function posMixedUpdate()"),mixedUiEnd=posSource.indexOf("async function posConfirmMixedPayment()",mixedUiStart);
+const uiFields=new Map([
+  ["pos-mixed-card",{value:"60"}],["pos-mixed-transfer",{value:"50"}],["pos-mixed-cash",{value:"40"}],
+  ["pos-mixed-card-confirmed",{checked:true}],["pos-mixed-transfer-verified",{checked:true}],
+  ["pos-mixed-entered",{textContent:""}],["pos-mixed-remaining",{textContent:""}],
+  ["pos-mixed-submit",{disabled:true,classList:{toggle(){}}}],
+]);
+const uiContext=vm.createContext({posEl:id=>uiFields.get(id),posCartSnapshot:()=>({total:150}),formatMoney:n=>String(n)});
+vm.runInContext(posSource.slice(mixedUiStart,mixedUiEnd),uiContext);
+vm.runInContext("posMixedUpdate()",uiContext);
+assert.equal(uiFields.get("pos-mixed-submit").disabled,false,"UI enables a correctly confirmed three-tender total");
+uiFields.get("pos-mixed-transfer-verified").checked=false;
+vm.runInContext("posMixedUpdate()",uiContext);
+assert.equal(uiFields.get("pos-mixed-submit").disabled,true,"UI requires bank verification for transfer tender");
+uiFields.get("pos-mixed-transfer-verified").checked=true;
+uiFields.get("pos-mixed-cash").value="39";
+vm.runInContext("posMixedUpdate()",uiContext);
+assert.equal(uiFields.get("pos-mixed-submit").disabled,true,"UI blocks tender amounts that do not equal the total");
 const source = await text("js/hardware-pos.js");
 const values = new Map();
 const writes = [];
