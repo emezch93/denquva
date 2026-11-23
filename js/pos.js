@@ -913,7 +913,7 @@ function posPrintLabels() {
 function posSettingsCardHtml(cfg) {
   if (!cfg) {
     return `<div class="card p-4 mt-4"><h2 class="font-display font-bold mb-1">POS and payments</h2>
-      <p class="text-sm text-ink/50">Card and transfer payments need the server update. Follow DEPLOY.md, then come back here.</p></div>`;
+      <p class="text-sm text-ink/50">Payment integrations are unavailable until the current complete Worker is deployed.</p></div>`;
   }
   const hook = p => `${API_BASE}/webhooks/${p}/${cfg.webhook_token}`;
   const field = (id, label, value, extra = "") => `<div><label class="text-xs text-ink/50">${label}</label>

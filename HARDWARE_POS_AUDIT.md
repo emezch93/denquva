@@ -1,6 +1,6 @@
 # Denquva POS hardware audit implementation
 
-This local implementation uses the latest GitHub main frontend snapshot and the current Worker source supplied for this task. Nothing has been pushed or deployed.
+This audit note describes the merged Counter POS and hardware support. Follow `FINAL_RELEASE_AUDIT.md` for the current repository-wide review and validation status.
 
 ## Implemented
 
@@ -41,8 +41,11 @@ Checks cover all three D1 migrations, Worker-origin shift list/open/close reques
 - Added owner-only percentage discounts to the Counter POS cash and electronic-payment flows. Authorization is derived in the Worker from the authenticated role; staff can only finalize an owner-created pending discounted payment. The Worker records subtotal and discount metadata on sales/reversals, charges the discounted amount, and calculates profit against discounted revenue. Existing credit-sale discount behavior remains separate.
 - Added register shifts with opening and closing cash counts, one open shift per shop/register, authenticated staff/owner close permissions, cash-only expected drawer reconciliation, and reversal deductions.
 - Added register filtering to the existing Sales view. Sales now retain tender method metadata for new Worker-recorded sales; historic tender methods remain NULL and are excluded from shift cash totals.
+- Added a Mixed tender flow for any combination of POS, bank transfer, and cash. The Worker validates the total, saves stock and sales atomically, and allocates tender amounts to the payment ledger for cash reconciliation.
+- Kept `worker.js` identical to the canonical `server/worker.js`; tests fail if these deployable copies drift.
 - Added owner-configured automatic drawer pulse after an accepted cash checkout, keyed per local transaction to avoid duplicate pulses. It reports when no printer is connected. The setting is stored per shop and browser/device.
 - Drawer operation is an explicit owner-only test action. Automatic drawer opening, cashier-level drawer permissions, customer receipt fields, shifts, and terminal-filtered reporting are not implemented.
 - This smoke suite is not a substitute for the absent full browser/API test suite or physical-hardware acceptance testing.
 
-The application PR was merged. The Worker is tracked separately at server/worker.js for reference.
+The application changes are merged. The complete Worker source is `server/worker.js`, with an identical root `worker.js` mirror for full-file dashboard deployment.
+

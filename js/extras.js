@@ -2,8 +2,8 @@
 // Denquva extras: staff logins, owner approval, stock adjustment and stocktake,
 // archive and restore, expenses, End of Day, part payments on credit, offline
 // selling queue, activity log, backup and support.
-// Loads after app.js, pos.js and reverse.js. Needs the server add-on
-// (worker-extras.js). If the add-on is missing, the screens say so.
+// Loads after app.js, pos.js and reverse.js. These routes are served by the
+// complete Worker source in server/worker.js, mirrored at the repository root.
 // ============================================================================
 
 const X_SUPPORT = { wa1: "2348185947780", wa2: "2348169142002", email: "denquva@gmail.com" };
@@ -38,7 +38,7 @@ function xMethodSelect(id, def = "cash") {
   return `<select id="${id}" class="w-full border border-black/10 rounded-xl px-3 py-2.5 bg-white">${X_METHODS.map(([k, l]) => `<option value="${k}" ${k === def ? "selected" : ""}>${l}</option>`).join("")}</select>`;
 }
 function xNeedServer(err) {
-  return err && err.status === 404 ? "This needs the server update. See DEPLOY.md, step 2." : (err && err.message) || "Something went wrong";
+  return err && err.status === 404 ? "This feature needs the current complete Worker deployed from server/worker.js." : (err && err.message) || "Something went wrong";
 }
 function xDigits(phone) {
   let d = String(phone || "").replace(/\D/g, "");
@@ -228,8 +228,11 @@ function xPayPicked(method) {
 // ---------------- offline selling queue ----------------
 const XQ_KEY = "denquva_offline_queue";
 const XQ_ISSUES = "denquva_offline_issues";
+const XQ_DONE = "denquva_offline_done";
 function xRead(key) { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } }
 function xWrite(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch {} xUpdatePill(); }
+function xQueueMarkDone(ref) { const done=new Set(xRead(XQ_DONE)); done.add(ref); try{localStorage.setItem(XQ_DONE,JSON.stringify([...done]));}catch{} }
+function xQueueClearDone(ref) { try{localStorage.setItem(XQ_DONE,JSON.stringify(xRead(XQ_DONE).filter(x=>x!==ref)));}catch{} }
 function xNewRef() { return "o" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 function xCacheProducts(list) { try { localStorage.setItem(`denquva_prod_${activeShopId}`, JSON.stringify(list)); } catch {} }
 function xReadProductCache() { try { return JSON.parse(localStorage.getItem(`denquva_prod_${activeShopId}`) || "null"); } catch { return null; } }
@@ -244,16 +247,27 @@ function xQueueOpenDb() {
   return xQueueIdbPromise;
 }
 async function xQueueIdbPut(entry) { const db = await xQueueOpenDb(); await new Promise((resolve,reject)=>{const tx=db.transaction("sales","readwrite");tx.objectStore("sales").put(entry);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);}); }
-async function xQueueIdbDelete(ref) { try { const db=await xQueueOpenDb(); await new Promise((resolve,reject)=>{const tx=db.transaction("sales","readwrite");tx.objectStore("sales").delete(ref);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);}); } catch {} }
+async function xQueueIdbDelete(ref) { try { const db=await xQueueOpenDb(); await new Promise((resolve,reject)=>{const tx=db.transaction("sales","readwrite");tx.objectStore("sales").delete(ref);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);}); return true; } catch { return false; } }
 async function xQueueReadAll() {
   const local=xRead(XQ_KEY); let saved=[];
   try { const db=await xQueueOpenDb(); saved=await new Promise((resolve,reject)=>{const tx=db.transaction("sales","readonly"),req=tx.objectStore("sales").getAll();req.onsuccess=()=>resolve(req.result||[]);req.onerror=()=>reject(req.error);}); } catch {}
   const merged=new Map(); for(const item of saved)merged.set(item.ref,item); for(const item of local)merged.set(item.ref,item);
-  return [...merged.values()];
+  const done=new Set(xRead(XQ_DONE));
+  return [...merged.values()].filter(item=>!done.has(item.ref));
 }
-async function xQueueRemove(ref) { xWrite(XQ_KEY,xRead(XQ_KEY).filter(x=>x.ref!==ref)); await xQueueIdbDelete(ref); }
+async function xQueueRemove(ref) {
+  // Persist a tombstone before deleting either copy. If the tab closes or
+  // IndexedDB fails between writes, the completed sale cannot reappear as
+  // "waiting to sync" on the next load.
+  xQueueMarkDone(ref);
+  xWrite(XQ_KEY,xRead(XQ_KEY).filter(x=>x.ref!==ref));
+  const idbRemoved=await xQueueIdbDelete(ref);
+  const localRemoved=!xRead(XQ_KEY).some(item=>item.ref===ref);
+  if(idbRemoved&&localRemoved)xQueueClearDone(ref);
+}
 
 async function xQueueAdd(ref, items, terminalId = typeof hardwareTerminalId === "function" ? hardwareTerminalId() : "", discountPercent = 0) {
+  xQueueClearDone(ref);
   const q = xRead(XQ_KEY);
   const entry = { ref, shop: String(activeShopId), items, terminalId, discountPercent: Number(discountPercent || 0), at: new Date().toISOString() };
   q.push(entry);
@@ -269,11 +283,11 @@ let xSyncing = false;
 async function xSyncQueue() {
   if (xSyncing || !authToken || USE_SAMPLE_DATA) return;
   xSyncing = true;
-  const all = await xQueueReadAll();
-  const mine = all.filter(e => e.shop === String(activeShopId));
-  if (!mine.length) { xSyncing = false; xUpdatePill(); return; }
   let synced = 0;
   try {
+    const all = await xQueueReadAll();
+    const mine = all.filter(e => e.shop === String(activeShopId));
+    if (!mine.length) return;
     for (const e of mine) {
       try {
         const r = await Api.sellBatch(e.items, { method: "cash", ref: e.ref, clientTime: e.at, terminalId: e.terminalId || "", discountPercent: e.discountPercent || 0 });
@@ -281,7 +295,8 @@ async function xSyncQueue() {
         synced++;
         if (r.failed && r.failed.length) xWrite(XQ_ISSUES, [...xRead(XQ_ISSUES), { at: e.at, items: e.items, why: r.failed.map(f => f.reason || "Not recorded").join("; ") }]);
       } catch (err) {
-        if (xIsNetworkError(err) || err.status === 401 || /read only/i.test(err.message || "")) break;
+        const status=Number(err && err.status || 0);
+        if (xIsNetworkError(err) || [401,402,408,425,429].includes(status) || status >= 500 || /read only|subscription.*not active/i.test(err.message || "")) break;
         await xQueueRemove(e.ref);
         xWrite(XQ_ISSUES, [...xRead(XQ_ISSUES), { at: e.at, items: e.items, why: err.message || "Rejected by the server" }]);
       }
@@ -298,7 +313,7 @@ async function xUpdatePill() {
   }
   const n = (await xQueueReadAll()).filter(e => e.shop === String(activeShopId)).length;
   const bad = xRead(XQ_ISSUES).length;
-  if (!authToken || (!n && !bad)) { pill.classList.add("hidden"); return; }
+  if (!authToken || (!n && !bad)) { pill.classList.add("hidden"); pill.textContent = ""; return; }
   pill.classList.remove("hidden");
   pill.classList.toggle("x-pill-bad", !!bad);
   pill.textContent = bad ? `${bad} sale${bad === 1 ? "" : "s"} need attention` : `${n} waiting to sync`;
@@ -762,7 +777,7 @@ async function xDownloadBackup() {
     const timer = setTimeout(() => ctrl.abort(), 120000);
     const res = await authFetch(`${API_BASE}/api/x/backup`, { signal: ctrl.signal });
     clearTimeout(timer);
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(res.status === 404 ? "Backup needs the server update. See DEPLOY.md, step 2." : e.error || `Backup failed (${res.status})`); }
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(res.status === 404 ? "Backups need the current complete Worker deployed from server/worker.js." : e.error || `Backup failed (${res.status})`); }
     const blob = await res.blob();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -916,4 +931,5 @@ async function xViewReversed() {
     <p class="text-xs text-ink/45 mb-3">These sales are not counted in your revenue, profit or reports.</p>
     <div id="xrv-list">${xRvListHtml()}</div>`}`;
 }
+
 

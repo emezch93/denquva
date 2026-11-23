@@ -13,10 +13,17 @@ Denquva helps business owners manage products, inventory, sales, profit, custome
 - **Sales, Reversed** lists every reversed sale. Reversing the same sale twice, or at the same moment from two screens, only ever happens once
 - Money is never sent back by Denquva. The screen reminds the owner to refund a customer who already paid by card or transfer
 
+**Customer delivery**
+- A shop can publish a customer order link, collect delivery details, accept requests for owner/staff-driver delivery or a courier, and share a private tracking link
+- Accepted delivery requests reserve stock; successful delivery records the sale and stock movement atomically. Failed, returned, cancelled, or rejected requests release the reservation without recording a sale
+- Owner-driver location sharing uses the browser/device location permission while the delivery screen is open. It is not guaranteed to continue when the app is closed or the device is locked
+- Courier rates, shipping labels, and automatic tracking webhooks are available through each shop owner's EasyPost account; carrier/country availability is determined by that account and the carrier
+- Delivery requires the `20261017_delivery.sql` schema and `DELIVERY_ENCRYPTION_KEY` (base64 for 32 cryptographically random bytes). The existing production database migration has already been applied; do not rerun it there. Never put the encryption key or courier API key in Git
+
 **Barcode scanning and POS payments**
 - Scan products with a USB or Bluetooth barcode scanner (acts like a keyboard) or the phone camera. The product SKU is the barcode, so scanning adds the item to the Multi Sale cart
 - Unknown barcode opens a quick add form (with an optional name lookup from Open Food Facts) and the new product goes straight into the cart
-- Charge screen with Cash, Card POS, Transfer, and Credit. Cash and Credit finish at once. Card and Transfer create a pending sale held for 10 minutes and complete by themselves when the payment is confirmed
+- Charge screen with Cash, Card POS, Transfer, Mixed, and Credit. Mixed records any two or all three of POS, transfer, and cash; electronic portions require confirmation and the total must balance. Regular Card POS and Transfer can create pending sales held for 10 minutes and complete when payment is confirmed
 - Moniepoint and OPay terminals: Denquva sends the total to the terminal and confirms by asking the provider directly (webhooks only speed it up). Without a connected terminal, one tap on Payment received confirms it
 - Plain bank transfers confirm by themselves: a phone SMS forwarder app posts the bank alert to a private address from Settings, and Denquva confirms only when exactly one open transfer sale matches the credited amount (bank alert emails through Cloudflare Email Routing are an optional alternative)
 - Held sales ("Awaiting payment"), paid sales are recorded even if the screen was closed, receipts to print or share on WhatsApp, and printable Code 128 barcode labels for products without a barcode
@@ -96,30 +103,30 @@ denquva/
 ├── index.html              App shell, metadata, canonical and SEO tags
 ├── service-worker.js       Offline caching (bump CACHE_NAME on every release)
 ├── manifest.json           PWA manifest
-├── robots.txt
-├── sitemap.xml
-├── tailwind.config.js      Tailwind configuration
+├── delivery.html           Public customer delivery request and tracking page
 ├── css/
-│   ├── tailwind.css        Compiled Tailwind output
-│   └── app.css             Custom styles, including the landing page
+│   ├── tailwind.css
+│   ├── app.css
+│   └── hardware-pos.css
 ├── js/
-│   ├── app.js              Application logic, auth screens, and UI rendering
-│   ├── pos.js              Barcode scanning, charge and payment flow, receipts, labels, POS settings
-│   └── reverse.js          Reverse a sale: confirm sheet, Undo bar
-├── icons/                  PWA icons
+│   ├── app.js              Application logic and UI
+│   ├── pos.js              Checkout, barcode scanning, payment flows, and receipts
+│   ├── hardware-pos.js     Register, printer, and drawer support
+│   ├── extras.js           Staff, activity, backup, and supporting features
+│   ├── reverse.js          Sale reversals
+│   ├── delivery.js         Owner delivery tools
+│   └── delivery-public.js  Customer delivery page logic
 ├── migrations/
-│   ├── terms_acceptance.sql   Adds terms acceptance columns to the shops table
-│   ├── debts.sql              Creates the debts and debt_payments tables
-│   ├── pos.sql                Creates pos_integrations, pending_sales, and payment_events
-│   └── sale_reversals.sql     Creates sale_reversals (records of reversed sales)
-└── worker/
-    ├── signup-block.js     Signup function with Turnstile and terms checks (for worker.js)
-    └── pos-block.js        POS payments, Moniepoint and OPay, webhooks, alert emails (paste into worker.js)
+│   ├── 20261017_delivery.sql
+│   ├── hardware-pos.sql
+│   ├── hardware-pos-discounts.sql
+│   └── hardware-pos-shifts.sql
+├── server/worker.js        Canonical complete Worker source
+├── worker.js               Full-file mirror for Cloudflare dashboard deployments
+└── tests/                  Node smoke checks for Worker and app behavior
 ```
 
-See DEPLOY.md for the step by step POS and barcode setup.
-
-The Worker itself (`worker.js`) lives in Cloudflare and is edited there.
+`server/worker.js` is the canonical Worker source. The root `worker.js` is kept identical for Cloudflare dashboard deployments; the smoke tests check that they stay in sync. The live Worker bindings and secrets are managed in Cloudflare, not in this repository.
 
 ## How sign in works
 
@@ -129,38 +136,14 @@ The Worker itself (`worker.js`) lives in Cloudflare and is edited there.
 4. The Worker returns a signed token that the app keeps on the device. Every API call sends it as a Bearer token, and every `/api` route rejects requests without a valid one.
 5. A session ends on logout, when the server answers 401, or after 30 days without activity.
 
-## Setup
+## Deployment and operations
 
-Everything can be done in the Cloudflare dashboard.
-
-**1. Turnstile**
-- Turnstile, Add widget, hostname `denquva.pages.dev`, mode Managed
-- Put the **Site Key** (public) in `TURNSTILE_SITE_KEY` at the top of `js/app.js`
-- Keep the **Secret Key** private
-
-**2. Worker secret**
-- Workers and Pages, your API Worker, Settings, Variables and Secrets
-- Add a Secret named `TURNSTILE_SECRET_KEY` with the Secret Key as its value
-- The secrets are never placed in the frontend or in this repo
-
-**3. Database**
-- D1, your database, Console, run the two statements in `migrations/terms_acceptance.sql` one at a time
-- Existing accounts keep empty values in the new columns
-- For the Debts page, also run each statement in `migrations/debts.sql` one at a time. Run them before deploying the Worker.
-
-**4. Worker code**
-- In the Worker's Edit code view, replace the old `signup` function with the contents of `worker/signup-block.js`, then Deploy
-
-**4a. Reverse a sale**
-- In the D1 Console run each statement in `migrations/sale_reversals.sql` one at a time, then deploy the updated `worker.js`
-
-**4b. POS and barcode (optional but recommended)**
-- Follow `DEPLOY.md`. It adds the `migrations/pos.sql` tables and pastes `worker/pos-block.js` into the Worker
-
-**5. Website**
-- Set `TURNSTILE_SITE_KEY` in `js/app.js`, then upload the site files in Workers and Pages, your Pages project, Create deployment
-
-Other Worker variables already in use: `JWT_SECRET`, `AI_API_KEY`, `PAYSTACK_SECRET_KEY`, `PAYSTACK_PLAN_CODE`, and optionally `FRONTEND_URL`.
+- **Pages:** publish the merged `main` branch through the existing Cloudflare Pages connection.
+- **Worker:** deploy the complete `server/worker.js` source to the existing `denquva-api` Worker. The root `worker.js` mirror is identical. Do not paste only selected function blocks into the live Worker.
+- **D1:** the production database already has the delivery, POS, discount, and register-shift schema described in `migrations/README.md`. Do not rerun one-time `ALTER TABLE` migrations against it. For any new D1 database, inspect its schema and follow the migration notes before deployment.
+- **Secrets:** configure `JWT_SECRET`, `TURNSTILE_SECRET_KEY`, `AI_API_KEY`, `PAYSTACK_SECRET_KEY`, `PAYSTACK_PLAN_CODE`, and `DELIVERY_ENCRYPTION_KEY` in Cloudflare as applicable. Never commit secret values. Provider credentials for POS and EasyPost are configured per shop inside the app.
+- **Readiness:** while signed in as the owner, open `/api/x/health` on the API Worker to check database tables and configured integrations. A ready flag means configuration is present; it does not prove a live provider transaction will succeed.
+- **Local checks:** with Node.js 22 or newer, run `node tests/hardware-pos-smoke.mjs` and `node tests/business-insights-smoke.mjs`.
 
 ## Checking a release
 
@@ -170,8 +153,7 @@ Other Worker variables already in use: `JWT_SECRET`, `AI_API_KEY`, `PAYSTACK_SEC
 4. Refresh. You stay signed in.
 5. Log out. You see the login screen, not the landing page. Log back in.
 6. Log in with an older account and confirm its products and sales are intact.
-7. Confirm acceptance was saved:
-   `SELECT email, terms_accepted_at, terms_version FROM shops ORDER BY id DESC LIMIT 5;`
+7. Check the authenticated owner health endpoint and verify any enabled external payment or courier integration with its provider's test mode before relying on it for live transactions.
 
 ## Notes
 
@@ -181,6 +163,4 @@ Other Worker variables already in use: `JWT_SECRET`, `AI_API_KEY`, `PAYSTACK_SEC
 
 Built by [CodeVent Digital](https://codeventdigital.site).
 
-## Customer delivery
 
-Denquva includes a delivery flow for shop-owned drivers or courier fulfillment, public order tracking, staff/owner delivery management, and inventory reservations while requests are active. Setup and deployment requirements are documented in [DELIVERY_DEPLOYMENT.md](DELIVERY_DEPLOYMENT.md); apply the D1 migration before deploying the Worker and frontend.

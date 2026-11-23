@@ -1066,7 +1066,7 @@ async function reverseOneSale(env, shopId, saleId, restock, reason) {
 function reversalSetupError(e, request) {
   if (/no such (table|column)/i.test(String(e && e.message))) {
     console.error("sale_reversals table is missing:", e.message);
-    return error("Reversing sales is not set up on the server yet. Run migrations/sale_reversals.sql in D1.", 503, request);
+    return error("Sale reversal database tables are unavailable. Check the applied D1 schema and migrations/README.md.", 503, request);
   }
   return null;
 }
@@ -2315,7 +2315,7 @@ async function deleteDebt(env, id, shopId, request) {
 
 // =====================================================================
 // POS and payments: barcode charge flow, Moniepoint, OPay, bank alerts.
-// Tables come from migrations/pos.sql.
+// Required payment tables are part of the existing D1 schema; see migrations/README.md.
 // =====================================================================
 
 const POS_DB_BINDING = "DB";
@@ -2994,7 +2994,7 @@ async function posApi(request, env, ctx, url, shopId) {
     const msg = String((err && err.message) || err);
     if (/no such (table|column)/i.test(msg)) {
       console.error("POS tables are missing:", msg);
-      return posJson({ error: "Payments are not set up on the server yet. Run migrations/pos.sql in D1." }, 503);
+      return posJson({ error: "Payment tables are unavailable. Check the applied D1 schema and migrations/README.md." }, 503);
     }
     return posJson({ error: msg }, 400);
   }
@@ -3292,10 +3292,15 @@ const X_SCHEMA = [
   `CREATE INDEX IF NOT EXISTS x_credit_pay_ix ON x_credit_pay (shop_id, credit_id)`,
   `CREATE INDEX IF NOT EXISTS x_audit_ix ON x_audit (shop_id, at)`,
 ];
-let xSchemaReady = null;
-function xEnsureSchema(env) {
-  if (!xSchemaReady) xSchemaReady = env.DB.batch(X_SCHEMA.map(s => env.DB.prepare(s))).catch(e => { xSchemaReady = null; throw e; });
-  return xSchemaReady;
+let xSchemaReady = false;
+async function xEnsureSchema(env) {
+  if (xSchemaReady) return;
+  // Keep only a boolean at module scope. Sharing an in-flight D1 promise
+  // across concurrent Worker requests can cross request execution contexts.
+  // Every statement is CREATE ... IF NOT EXISTS, so concurrent first calls
+  // can safely initialize the same schema.
+  await env.DB.batch(X_SCHEMA.map(s => env.DB.prepare(s)));
+  xSchemaReady = true;
 }
 const X_PURGE = ["x_config", "x_staff", "x_audit", "x_sale_pay", "x_credit_pay", "x_expenses", "x_adjust", "x_refs", "x_customers", "x_manual", "x_eod"];
 async function xPurge(env, shopIds, loginId) {
