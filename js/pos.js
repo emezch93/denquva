@@ -5,12 +5,14 @@ function posNowClock(ms) {
   return new Date(ms || Date.now()).toLocaleString([], { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 function posMethodLabel(m) {
-  return { cash: "Cash", card: "Card POS", transfer: "Transfer", mixed: "Transfer + cash", credit: "Credit" }[m] || m;
+  return { cash: "Cash", card: "Card POS", transfer: "Transfer", mixed: "Mixed", credit: "Credit" }[m] || m;
 }
 
 let posAudio = null;
 let posMixedRef = "";
 let posMixedRefKey = "";
+let posMixedPaymentsLocked = false;
+let posMixedPayments = null;
 function posBeep(good) {
   try {
     posAudio = posAudio || new (window.AudioContext || window.webkitAudioContext)();
@@ -354,7 +356,7 @@ async function posOpenCharge() {
       ${methodBtn("cash", "Cash", "Done at once", icons.cash, false)}
       ${methodBtn("card", "Card POS", connected ? `Sent to ${providerName} terminal` : "Confirm when paid", icons.card, !posServerReady)}
       ${methodBtn("transfer", "Transfer", connected ? `Sent to ${providerName} terminal` : "Confirm when alert comes", icons.transfer, !posServerReady)}
-      ${methodBtn("mixed", "Transfer + cash", "Record transfer, then cash balance", icons.transfer, !posServerReady)}
+      ${methodBtn("mixed", "Mixed", "Split across POS, transfer and cash", icons.transfer, !posServerReady)}
       ${methodBtn("credit", "Credit", "Pay later", icons.credit, false)}
     </div>
     ${terminals.length > 1 ? `
@@ -367,6 +369,7 @@ async function posOpenCharge() {
 }
 
 function posChoose(method) {
+  if (posMixedPaymentsLocked) { toast("Finish retrying the previous Mixed payment with its original amounts first."); return; }
   if (method === "cash") { posCloseSheet(); confirmMultiSale(); return; }
   if (method === "mixed") { posOpenMixedPayment(); return; }
   if (method === "credit") { posMoveCartToCredit(); return; }
@@ -377,42 +380,59 @@ function posOpenMixedPayment() {
   const snap = posCartSnapshot();
   if (!(snap.total > 0)) return;
   const key = JSON.stringify({ items: [...multiSaleCart.entries()].sort((a, b) => a[0] - b[0]), discount: snap.discountPercent || 0 });
-  if (posMixedRefKey !== key) { posMixedRefKey = key; posMixedRef = typeof xNewRef === "function" ? xNewRef() : `mix-${crypto.randomUUID()}`; }
-  posOpenSheet(`<h2 class="font-display text-xl font-extrabold mb-1">Transfer + cash</h2>
-    <p class="text-sm text-ink/55 mb-3">Total due: <b>${formatMoney(snap.total)}</b>. Enter the transfer received; the rest will be recorded as cash.</p>
-    <label for="pos-mixed-transfer" class="text-xs font-semibold text-ink/60">Transfer amount received</label>
-    <input id="pos-mixed-transfer" type="number" min="0.01" max="${Number(snap.total).toFixed(2)}" step="0.01" inputmode="decimal" class="w-full border border-black/10 rounded-xl px-3 py-3 mt-1" placeholder="0.00" oninput="posMixedUpdate()" />
-    <div class="rounded-xl bg-black/5 p-3 mt-3 text-sm">Cash balance: <b id="pos-mixed-cash">${formatMoney(snap.total)}</b></div>
-    <label class="flex items-start gap-2 text-sm mt-3"><input id="pos-mixed-verified" type="checkbox" onchange="posMixedUpdate()" style="width:18px;height:18px;flex:none;margin-top:1px" /><span>I verified the transfer in the business bank account.</span></label>
-    <p class="text-xs text-ink/50 mt-2">Do not record a transfer based only on a screenshot or customer notification.</p>
-    <button id="pos-mixed-submit" onclick="posConfirmMixedPayment()" disabled class="w-full py-2.5 rounded-xl bg-primary text-white font-semibold mt-4 opacity-50">Record payment</button>
+  if (posMixedPaymentsLocked && posMixedRefKey !== key) { toast("Finish retrying the previous Mixed payment with its original cart first."); return; }
+  if (posMixedRefKey !== key) { posMixedRefKey = key; posMixedRef = typeof xNewRef === "function" ? xNewRef() : `mix-${crypto.randomUUID()}`; posMixedPaymentsLocked = false; posMixedPayments = null; }
+  const disabled = posMixedPaymentsLocked ? "disabled" : "";
+  posOpenSheet(`<h2 class="font-display text-xl font-extrabold mb-1">Mixed payment</h2>
+    <p class="text-sm text-ink/55 mb-3">Total due: <b>${formatMoney(snap.total)}</b>. Enter the amount received by each method. Use two or all three.</p>
+    <div class="space-y-2">
+      ${[["card","POS amount"],["transfer","Transfer amount"],["cash","Cash amount"]].map(([method,label]) => `<label class="block text-xs font-semibold text-ink/60">${label}<input id="pos-mixed-${method}" type="number" min="0" max="${Number(snap.total).toFixed(2)}" step="0.01" inputmode="decimal" value="${posMixedPayments?.find(p=>p.method===method)?.amount ?? ""}" ${disabled} class="w-full border border-black/10 rounded-xl px-3 py-2.5 mt-1" placeholder="0.00" oninput="posMixedUpdate()" /></label>`).join("")}
+    </div>
+    <div class="rounded-xl bg-black/5 p-3 mt-3 text-sm">Entered: <b id="pos-mixed-entered">${formatMoney(0)}</b> · Remaining: <b id="pos-mixed-remaining">${formatMoney(snap.total)}</b></div>
+    <div id="pos-mixed-confirmations" class="space-y-2 mt-3">
+      <label class="flex items-start gap-2 text-sm"><input id="pos-mixed-card-confirmed" type="checkbox" ${posMixedPaymentsLocked && posMixedPayments?.some(p=>p.method==="card") ? "checked" : ""} ${disabled} onchange="posMixedUpdate()" style="width:18px;height:18px;flex:none;margin-top:1px" /><span>I confirmed the POS payment completed on the terminal.</span></label>
+      <label class="flex items-start gap-2 text-sm"><input id="pos-mixed-transfer-verified" type="checkbox" ${posMixedPaymentsLocked && posMixedPayments?.some(p=>p.method==="transfer") ? "checked" : ""} ${disabled} onchange="posMixedUpdate()" style="width:18px;height:18px;flex:none;margin-top:1px" /><span>I verified the transfer in the business bank account.</span></label>
+    </div>
+    <p class="text-xs text-ink/50 mt-2">Complete partial POS payments on the terminal and verify transfers in the bank. Do not rely on screenshots or customer notifications.</p>
+    ${posMixedPaymentsLocked ? `<p class="text-xs text-danger mt-2">Payment recording was interrupted. Retry with these same amounts and check sales before starting another checkout.</p>` : ""}
+    <button id="pos-mixed-submit" onclick="posConfirmMixedPayment()" ${posMixedPaymentsLocked ? "" : "disabled"} class="w-full py-2.5 rounded-xl bg-primary text-white font-semibold mt-4 ${posMixedPaymentsLocked ? "" : "opacity-50"}">${posMixedPaymentsLocked ? "Retry recording" : "Record mixed payment"}</button>
     <button onclick="posOpenCharge()" class="w-full py-2.5 rounded-xl border border-black/10 font-semibold mt-2">Back to payment methods</button>`);
 }
 
 function posMixedUpdate() {
-  const input = posEl("pos-mixed-transfer"), snap = posCartSnapshot();
-  const transfer = Math.round(Number(input && input.value) * 100) / 100;
-  const valid = Number.isFinite(transfer) && transfer > 0 && transfer < snap.total;
-  const cash = valid ? Math.round((snap.total - transfer) * 100) / 100 : snap.total;
-  const cashEl = posEl("pos-mixed-cash"), button = posEl("pos-mixed-submit");
-  if (cashEl) cashEl.textContent = formatMoney(cash);
-  if (button) { button.disabled = !valid || !(posEl("pos-mixed-verified") && posEl("pos-mixed-verified").checked); button.classList.toggle("opacity-50", button.disabled); }
+  const snap = posCartSnapshot(), cents = method => {
+    const input = posEl(`pos-mixed-${method}`), value = input && input.value.trim() !== "" ? Number(input.value) : 0;
+    return Number.isFinite(value) && value >= 0 ? Math.round(value * 100) : NaN;
+  };
+  const tender = ["card", "transfer", "cash"].map(method => ({ method, cents: cents(method) }));
+  const totalCents = Math.round(snap.total * 100), entered = tender.reduce((n, p) => n + (Number.isFinite(p.cents) ? p.cents : 0), 0);
+  const card = tender.find(p => p.method === "card").cents, transfer = tender.find(p => p.method === "transfer").cents;
+  const valid = tender.every(p => Number.isFinite(p.cents)) && tender.filter(p => p.cents > 0).length >= 2 && entered === totalCents
+    && (!card || posEl("pos-mixed-card-confirmed")?.checked) && (!transfer || posEl("pos-mixed-transfer-verified")?.checked);
+  const enteredEl = posEl("pos-mixed-entered"), remainingEl = posEl("pos-mixed-remaining"), button = posEl("pos-mixed-submit");
+  if (enteredEl) enteredEl.textContent = formatMoney(entered / 100);
+  if (remainingEl) remainingEl.textContent = formatMoney((totalCents - entered) / 100);
+  if (button) { button.disabled = !valid; button.classList.toggle("opacity-50", button.disabled); }
 }
 
 async function posConfirmMixedPayment() {
-  const snap = posCartSnapshot(), transfer = Math.round(Number(posEl("pos-mixed-transfer")?.value) * 100) / 100;
-  if (!posEl("pos-mixed-verified")?.checked) { toast("Verify the transfer in your bank account first"); return; }
-  const totalCents = Math.round(snap.total * 100), transferCents = Math.round(transfer * 100);
-  if (transferCents <= 0 || transferCents >= totalCents) { toast("Transfer must be more than zero and less than the total"); return; }
+  const snap = posCartSnapshot(), totalCents = Math.round(snap.total * 100);
+  const payments = posMixedPayments || ["card", "transfer", "cash"].map(method => ({ method, amount: Math.round(Number(posEl(`pos-mixed-${method}`)?.value || 0) * 100) / 100 })).filter(p => p.amount > 0);
+  if (payments.length < 2 || payments.reduce((n,p)=>n+Math.round(p.amount*100),0) !== totalCents) { toast("Use at least two payment methods and make their amounts match the total"); return; }
+  if (payments.some(p=>p.method==="card") && !posEl("pos-mixed-card-confirmed")?.checked) { toast("Confirm the POS payment completed on the terminal"); return; }
+  if (payments.some(p=>p.method==="transfer") && !posEl("pos-mixed-transfer-verified")?.checked) { toast("Verify the transfer in your bank account first"); return; }
   const button = posEl("pos-mixed-submit"); if (button) { button.disabled = true; button.textContent = "Recording…"; }
+  posMixedPayments = payments; posMixedPaymentsLocked = true;
+  ["card", "transfer", "cash"].forEach(method => { const input=posEl(`pos-mixed-${method}`); if(input) input.disabled=true; });
+  ["pos-mixed-card-confirmed", "pos-mixed-transfer-verified"].forEach(id => { const input=posEl(id); if(input) input.disabled=true; });
   const ref = posMixedRef || (posMixedRef = typeof xNewRef === "function" ? xNewRef() : `mix-${crypto.randomUUID()}`);
   try {
     const items = [...multiSaleCart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
-    const result = await Api.sellBatch(items, { method: "mixed", payments: [{ method: "transfer", amount: transferCents / 100 }, { method: "cash", amount: (totalCents - transferCents) / 100 }], ref, discountPercent: snap.discountPercent || 0 });
+    const result = await Api.sellBatch(items, { method: "mixed", payments, ref, discountPercent: snap.discountPercent || 0 });
     posCloseSheet(); closeModal("multisale-modal");
-    posAfterMixedSale(snap, result, transferCents / 100, (totalCents - transferCents) / 100);
+    posAfterMixedSale(snap, result, payments);
     if (typeof hardwareAfterCashSale === "function") await hardwareAfterCashSale(result, ref);
-    multiSaleCart = new Map(); posMixedRef = ""; posMixedRefKey = ""; if (typeof hardwareDiscountPercent === "number") hardwareDiscountPercent = 0; render();
+    multiSaleCart = new Map(); posMixedRef = ""; posMixedRefKey = ""; posMixedPaymentsLocked = false; posMixedPayments = null; if (typeof hardwareDiscountPercent === "number") hardwareDiscountPercent = 0; render();
   } catch (err) {
     toast(err.message || "Could not record split payment. Check sales before retrying.");
     posMixedUpdate();
@@ -755,11 +775,11 @@ function posAfterCashSale(snapshot, result) {
   posShowReceipt({ items, subtotal, discount_total: Number(result.discount_total || 0), total: result.total_amount, method: "cash", failed: result.failed || [], time: Date.now(), sales });
 }
 
-function posAfterMixedSale(snapshot, result, transferAmount, cashAmount) {
+function posAfterMixedSale(snapshot, result, payments) {
   const sold = new Map((result.succeeded || []).map(s => [s.product_id, s]));
   const items = snapshot.items.filter(i => sold.has(i.product_id)).map(i => ({ ...i, quantity: sold.get(i.product_id).quantity }));
   const sales = (result.succeeded || []).filter(x => x.sale_id).map(x => ({ id: x.sale_id, product_name: x.product_name, quantity: x.quantity, total_amount: x.total_amount }));
-  posShowReceipt({ items, subtotal: snapshot.subtotal, discount_total: Number(result.discount_total || 0), total: result.total_amount, method: "mixed", payments: [{ method: "transfer", amount: transferAmount }, { method: "cash", amount: cashAmount }], time: Date.now(), sales });
+  posShowReceipt({ items, subtotal: snapshot.subtotal, discount_total: Number(result.discount_total || 0), total: result.total_amount, method: "mixed", payments, time: Date.now(), sales });
 }
 
 // ---------------- barcode labels (Code 128) ----------------
