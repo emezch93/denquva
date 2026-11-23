@@ -7,6 +7,7 @@ Reviewed the repository at the merge of PR #22 (`99b899bc1c5f72bad6ab26f2f804a99
 ## Findings corrected
 
 - The GitHub repository's canonical Worker is `server/worker.js`; a local root `worker.js` copy is not tracked and is not the deployment source. Deployment docs and tests now use the canonical path.
+- Offline cash sales do not depend on POS provider setup. Retryable sync failures now display the actual reason (including expired login or inactive subscription), retain the sale, back off retries, and allow an explicit retry after the account issue is corrected.
 - Schema initialization cached an in-flight D1 promise in module scope. Concurrent requests could await the same request-bound I/O. It now caches only a boolean after successful initialization; all schema statements use `IF NOT EXISTS`, and the smoke test covers concurrent first calls.
 - The delivery deployment guide pointed at a nonexistent `outputs/worker.js`, and README setup instructions referenced missing deployment scripts and migrations. The docs now point to the real complete Worker files and warn against rerunning production migrations.
 - Checkout and staff feature fallbacks also referred users to a missing `DEPLOY.md` and migrations that are not in this repository. Those messages now point to the current Worker source and schema notes.
