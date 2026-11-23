@@ -372,8 +372,10 @@ const Api = {
       if (opts.method === "mixed") {
         const invalid = items.some(item => { const p = sampleProducts.find(x => x.id === item.product_id); return !p || p.quantity < item.quantity; });
         const dueCents = items.reduce((n, item) => { const p = sampleProducts.find(x => x.id === item.product_id); return n + (p ? Math.round(Math.round(p.selling_price * 100) * item.quantity * (100 - Number(opts.discountPercent || 0)) / 100) : 0); }, 0);
-        const tenderCents = (opts.payments || []).reduce((n, p) => n + Math.round(Number(p.amount) * 100), 0);
-        if (invalid || tenderCents !== dueCents) throw new Error("Split payment does not match the sale total or stock is unavailable.");
+        const payments = Array.isArray(opts.payments) ? opts.payments : [];
+        const methods = new Set(payments.map(p => p.method));
+        const tenderCents = payments.reduce((n, p) => n + Math.round(Number(p.amount) * 100), 0);
+        if (invalid || payments.length < 2 || payments.length > 3 || methods.size !== payments.length || payments.some(p => !["cash", "card", "transfer"].includes(p.method) || !(Number(p.amount) > 0)) || tenderCents !== dueCents) throw new Error("Mixed payment must use at least two valid methods, match the sale total, and have available stock.");
       }
       const succeeded = [];
       const failed = [];
@@ -2139,6 +2141,7 @@ function removeFromMultiSaleCart(productId) {
 }
 
 async function confirmMultiSale() {
+  if (typeof posMixedPaymentsLocked !== "undefined" && posMixedPaymentsLocked) { toast("Finish retrying the previous Mixed payment with its original amounts first."); return; }
   if (multiSaleCart.size === 0) return;
   const items = [...multiSaleCart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
   const snapshot = typeof posCartSnapshot === "function" ? posCartSnapshot() : null;
