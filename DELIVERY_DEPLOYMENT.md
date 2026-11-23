@@ -24,7 +24,7 @@ Add the output as the `DELIVERY_ENCRYPTION_KEY` Worker secret in Cloudflare. Kee
 
 ## 3. Deploy
 
-Deploy the complete canonical Worker source at `server/worker.js` to the existing `denquva-api` Worker. The root `worker.js` is maintained as an identical full-file mirror. Then publish the merged Pages files from GitHub, including `delivery.html`, `js/delivery-public.js`, `js/delivery.js`, `service-worker.js`, and the updated `index.html`. Do not deploy a partial Worker block or replace the full app with delivery-only files.
+Deploy the complete canonical Worker source at `server/worker.js` to the existing `denquva-api` Worker. Then publish the merged Pages files from GitHub, including `delivery.html`, `js/delivery-public.js`, `js/delivery.js`, `service-worker.js`, and the updated `index.html`. Do not deploy a partial Worker block or replace the full app with delivery-only files.
 
 ## 4. Verify with a test EasyPost key
 
