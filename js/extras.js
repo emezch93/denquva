@@ -265,6 +265,22 @@ async function xQueueRemove(ref) {
   const localRemoved=!xRead(XQ_KEY).some(item=>item.ref===ref);
   if(idbRemoved&&localRemoved)xQueueClearDone(ref);
 }
+async function xQueueUpdate(ref, patch) {
+  const entry=(await xQueueReadAll()).find(item=>item.ref===ref);
+  if(!entry)return;
+  const updated={...entry,...patch};
+  xWrite(XQ_KEY,[...xRead(XQ_KEY).filter(item=>item.ref!==ref),updated]);
+  try{await xQueueIdbPut(updated);}catch{}
+}
+function xQueueErrorText(err) {
+  const status=Number(err&&err.status||0);
+  if(status===401)return "Your login expired. Sign in again, then retry sync.";
+  if(status===402)return "Your subscription is inactive. Renew it to sync this sale.";
+  if(xIsNetworkError(err))return "Cannot reach the Denquva server. Check the connection and retry.";
+  if(status===429)return "The server is busy. This sale will retry shortly.";
+  if(status>=500)return `Server error (${status}). This sale will retry.`;
+  return err&&err.message||"Sync failed. This sale will retry.";
+}
 
 async function xQueueAdd(ref, items, terminalId = typeof hardwareTerminalId === "function" ? hardwareTerminalId() : "", discountPercent = 0) {
   xQueueClearDone(ref);
@@ -280,13 +296,14 @@ async function xQueueAdd(ref, items, terminalId = typeof hardwareTerminalId === 
   }
 }
 let xSyncing = false;
-async function xSyncQueue() {
+async function xSyncQueue(force = false) {
   if (xSyncing || !authToken || USE_SAMPLE_DATA) return;
   xSyncing = true;
   let synced = 0;
   try {
     const all = await xQueueReadAll();
-    const mine = all.filter(e => e.shop === String(activeShopId));
+    const now=Date.now();
+    const mine = all.filter(e => e.shop === String(activeShopId) && (force || !Number(e.nextRetryAt) || Number(e.nextRetryAt)<=now));
     if (!mine.length) return;
     for (const e of mine) {
       try {
@@ -296,7 +313,12 @@ async function xSyncQueue() {
         if (r.failed && r.failed.length) xWrite(XQ_ISSUES, [...xRead(XQ_ISSUES), { at: e.at, items: e.items, why: r.failed.map(f => f.reason || "Not recorded").join("; ") }]);
       } catch (err) {
         const status=Number(err && err.status || 0);
-        if (xIsNetworkError(err) || [401,402,408,425,429].includes(status) || status >= 500 || /read only|subscription.*not active/i.test(err.message || "")) break;
+        if (xIsNetworkError(err) || [401,402,408,425,429].includes(status) || status >= 500 || /read only|subscription.*not active/i.test(err.message || "")) {
+          const retryCount=Number(e.retryCount||0)+1;
+          const delay=Math.min(30*60*1000,30000*Math.pow(2,Math.min(retryCount-1,6)));
+          await xQueueUpdate(e.ref,{lastAttemptAt:new Date().toISOString(),lastError:xQueueErrorText(err),lastStatus:status||null,retryCount,nextRetryAt:Date.now()+delay});
+          break;
+        }
         await xQueueRemove(e.ref);
         xWrite(XQ_ISSUES, [...xRead(XQ_ISSUES), { at: e.at, items: e.items, why: err.message || "Rejected by the server" }]);
       }
@@ -311,17 +333,18 @@ async function xUpdatePill() {
     pill.id = "x-pill"; pill.className = "x-pill hidden"; pill.onclick = xShowQueueSheet;
     document.body.appendChild(pill);
   }
-  const n = (await xQueueReadAll()).filter(e => e.shop === String(activeShopId)).length;
+  const queued=(await xQueueReadAll()).filter(e => e.shop === String(activeShopId));
+  const n=queued.length, paused=queued.some(e=>e.lastError);
   const bad = xRead(XQ_ISSUES).length;
   if (!authToken || (!n && !bad)) { pill.classList.add("hidden"); pill.textContent = ""; return; }
   pill.classList.remove("hidden");
   pill.classList.toggle("x-pill-bad", !!bad);
-  pill.textContent = bad ? `${bad} sale${bad === 1 ? "" : "s"} need attention` : `${n} waiting to sync`;
+  pill.textContent = bad ? `${bad} sale${bad === 1 ? "" : "s"} need attention` : `${n} waiting${paused ? " · sync paused" : " to sync"}`;
 }
 async function xShowQueueSheet() {
   const q = (await xQueueReadAll()).filter(e => e.shop === String(activeShopId));
   const issues = xRead(XQ_ISSUES);
-  const line = e => `<div class="py-2 border-b border-black/5 last:border-0 text-sm"><div class="text-xs text-ink/45">${new Date(e.at).toLocaleString()}</div>${(e.items || []).map(i => `${i.quantity} x item ${i.product_id}`).join(", ")}${e.why ? `<div class="text-xs text-danger">${escapeHtml(e.why)}</div>` : ""}</div>`;
+  const line = e => `<div class="py-2 border-b border-black/5 last:border-0 text-sm"><div class="text-xs text-ink/45">${new Date(e.at).toLocaleString()}</div>${(e.items || []).map(i => `${i.quantity} x item ${i.product_id}`).join(", ")}${e.why ? `<div class="text-xs text-danger">${escapeHtml(e.why)}</div>` : ""}${e.lastError ? `<div class="text-xs text-amber-700 mt-1">${escapeHtml(e.lastError)}</div>` : ""}</div>`;
   posOpenSheet(`
     <h2 class="font-display text-xl font-extrabold mb-1">Offline sales</h2>
     <p class="text-sm text-ink/50 mb-3">Sales made without network are kept on this phone and sent when you are back online.</p>
@@ -329,7 +352,7 @@ async function xShowQueueSheet() {
     ${issues.length ? `<div class="text-xs font-semibold text-danger mt-3 mb-1">Could not be recorded (check your stock)</div>${issues.map(line).join("")}<button onclick="xWrite(XQ_ISSUES, []); posCloseSheet()" class="w-full py-2 rounded-xl bg-danger-light text-danger font-semibold mt-2 text-sm">Clear this list</button>` : ""}
     <div class="flex gap-2 mt-4">
       <button onclick="posCloseSheet()" class="flex-1 py-2.5 rounded-xl border border-black/10 font-semibold">Close</button>
-      ${q.length ? `<button onclick="posCloseSheet(); xSyncQueue()" class="flex-1 py-2.5 rounded-xl bg-primary text-white font-semibold">Sync now</button>` : ""}
+      ${q.length ? `<button onclick="posCloseSheet(); xSyncQueue(true)" class="flex-1 py-2.5 rounded-xl bg-primary text-white font-semibold">Retry sync</button>` : ""}
     </div>`);
 }
 // Called from confirmMultiSale when a cash sale cannot reach the server.

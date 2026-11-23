@@ -78,14 +78,21 @@ assert.equal(pill.textContent, "", "no stale waiting-to-sync badge remains");
 
 // Temporary authorization/subscription/provider outages retain the sale for
 // a later retry instead of moving it to the permanent-failure list.
-context.Api.sellBatch = async () => { const err = new Error("subscription inactive"); err.status = 402; throw err; };
+let syncAttempts=0;
+context.Api.sellBatch = async () => { syncAttempts++; const err = new Error("subscription inactive"); err.status = 402; throw err; };
 await api.xQueueAdd("sale-retry", sale);
 await api.xSyncQueue();
-assert.equal((await api.xQueueReadAll()).length, 1, "retryable failures stay queued");
+const pending=(await api.xQueueReadAll()).find(e=>e.ref==="sale-retry");
+assert.ok(pending, "retryable failures stay queued");
+assert.match(pending.lastError,/subscription is inactive/i,"queued sale shows actionable reason");
+assert.ok(pending.nextRetryAt>Date.now(),"retryable failures use backoff");
+assert.match(pill.textContent,/sync paused/i,"pill explains that sync is paused");
+await api.xSyncQueue();
+assert.equal(syncAttempts,1,"automatic retries respect backoff");
 assert.equal(api.xRead(api.XQ_ISSUES).length, 0);
 
 context.Api.sellBatch = async () => ({ failed: [{ reason: "Insufficient stock" }] });
-await api.xSyncQueue();
+await api.xSyncQueue(true);
 assert.equal((await api.xQueueReadAll()).length, 0, "server-rejected sale leaves waiting queue");
 assert.equal(api.xRead(api.XQ_ISSUES).length, 1, "permanent stock conflicts need attention");
 
