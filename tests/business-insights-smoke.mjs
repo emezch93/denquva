@@ -13,7 +13,7 @@ assert.match(worker, /WHERE p\.shop_id = \? AND p\.is_archived = 0/);
 assert.match(worker, /LIMIT 2000/);
 assert.match(app, /async getInsights\(\)/);
 assert.match(app, /Nothing changes automatically/);
-assert.match(serviceWorker, /denquva-shell-v41/);
+assert.match(serviceWorker, /denquva-shell-v42/);
 
 const start = worker.indexOf("function buildBusinessInsights(");
 const end = worker.indexOf("async function getBusinessInsights(", start);
