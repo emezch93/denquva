@@ -950,15 +950,15 @@ async function sellBatch(env, request, shopId) {
 // sale rows either succeed together or roll back together. Tenders are checked
 // in integer cents and allocated back to sale rows for accurate reconciliation.
 async function sellMixedBatch(env, request, shopId, items, discountPercent, payments) {
-  if (!Array.isArray(payments) || payments.length !== 2) throw Object.assign(new Error("Provide one transfer amount and one cash amount."), { status: 400 });
+  if (!Array.isArray(payments) || payments.length < 2 || payments.length > 3) throw Object.assign(new Error("Mixed payment must include two or three tender methods."), { status: 400 });
   const tender = new Map();
   for (const payment of payments) {
     const method = String(payment?.method || "").toLowerCase();
-    const cents = Math.round(Number(payment?.amount) * 100);
-    if (!["cash", "transfer"].includes(method) || !Number.isFinite(Number(payment?.amount)) || cents <= 0 || tender.has(method)) throw Object.assign(new Error("Split payment must contain positive cash and transfer amounts."), { status: 400 });
+    const amount = Number(payment?.amount), cents = Math.round(amount * 100);
+    if (!["cash", "card", "transfer"].includes(method) || !Number.isFinite(amount) || Math.abs(amount * 100 - cents) > 0.001 || cents <= 0 || tender.has(method)) throw Object.assign(new Error("Mixed payment must contain positive cash, POS, or transfer amounts without duplicates."), { status: 400 });
     tender.set(method, cents);
   }
-  if (!tender.has("cash") || !tender.has("transfer")) throw Object.assign(new Error("Split payment must contain cash and transfer."), { status: 400 });
+  if (tender.size < 2) throw Object.assign(new Error("Mixed payment must use at least two methods."), { status: 400 });
   const seen = new Set(), lines = [];
   let totalCents = 0, discountCentsTotal = 0, profitTotal = 0;
   for (const item of items) {
@@ -977,7 +977,8 @@ async function sellMixedBatch(env, request, shopId, items, discountPercent, paym
     lines.push({ product, quantity, subtotalCents, discountCents, lineCents, profit: lineCents / 100 - Number(product.cost_price || 0) * quantity });
     totalCents += lineCents; discountCentsTotal += discountCents; profitTotal += lines.at(-1).profit;
   }
-  if (tender.get("cash") + tender.get("transfer") !== totalCents) throw Object.assign(new Error(`Cash and transfer must add up to the checkout total (${(totalCents / 100).toFixed(2)}).`), { status: 400 });
+  const tenderTotalCents = Array.from(tender.values()).reduce((sum, amount) => sum + amount, 0);
+  if (tenderTotalCents !== totalCents) throw Object.assign(new Error(`All Mixed payment amounts must add up to the checkout total (${(totalCents / 100).toFixed(2)}).`), { status: 400 });
   const terminalId = cleanTerminalId(request.headers.get("X-Denquva-Terminal-Id"));
   const statements = [], assertionKeys = [];
   for (const line of lines) {
@@ -996,15 +997,17 @@ async function sellMixedBatch(env, request, shopId, items, discountPercent, paym
     if (low) throw Object.assign(new Error(`Only ${Math.max(0, Number(low.quantity) - Number(low.reserved_quantity || 0))} units of ${low.name} are available.`), { status: 409 });
     throw e;
   }
-  let transferLeft = tender.get("transfer");
+  const tenderLeft = new Map(tender);
   const succeeded = [], payment_allocations = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i], saleId = results[i * 4 + 2]?.meta?.last_row_id;
     const current = await env.DB.prepare("SELECT quantity FROM products WHERE id=? AND shop_id=?").bind(line.product.id, shopId).first();
-    const transfer = Math.min(transferLeft, line.lineCents); transferLeft -= transfer;
-    const cash = line.lineCents - transfer;
-    if (transfer) payment_allocations.push({ sale_id: saleId, method: "transfer", amount: transfer / 100 });
-    if (cash) payment_allocations.push({ sale_id: saleId, method: "cash", amount: cash / 100 });
+    let lineRemaining = line.lineCents;
+    for (const method of ["card", "transfer", "cash"]) {
+      const amount = Math.min(tenderLeft.get(method) || 0, lineRemaining);
+      if (amount > 0) { payment_allocations.push({ sale_id: saleId, method, amount: amount / 100 }); tenderLeft.set(method, tenderLeft.get(method) - amount); lineRemaining -= amount; }
+    }
+    if (lineRemaining !== 0) throw new Error("Mixed tender allocation did not match the sale amount.");
     succeeded.push({ sale_id: saleId, product_id: line.product.id, product_name: line.product.name, quantity: line.quantity, new_quantity: current?.quantity, total_amount: line.lineCents / 100, subtotal_amount: line.subtotalCents / 100, discount_amount: line.discountCents / 100, estimated_profit: line.profit });
   }
   return json({ succeeded, failed: [], total_amount: totalCents / 100, total_profit: Math.round(profitTotal * 100) / 100, discount_total: discountCentsTotal / 100, payment_allocations }, 201, request);
