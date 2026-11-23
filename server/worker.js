@@ -3213,7 +3213,7 @@ async function posDeleteShopData(env, shopId) {
 // New tables are created by this code on first use.
 // ============================================================================
 
-const X_HEADERS = ["Content-Type", "Authorization", "X-Shop-Id", "Idempotency-Key", "X-Payment-Method", "X-Client-Ref", "X-Client-Time", "X-Approval", "X-Override-Limit"];
+const X_HEADERS = ["Content-Type", "Authorization", "X-Shop-Id", "Idempotency-Key", "X-Denquva-Terminal-Id", "X-Payment-Method", "X-Client-Ref", "X-Client-Time", "X-Approval", "X-Override-Limit"];
 const X_GRACE_DAYS = 14;
 const xte = new TextEncoder();
 
