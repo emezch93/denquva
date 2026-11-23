@@ -1,10 +1,10 @@
 # Delivery deployment
 
-Delivery adds D1 tables and one `products` column. Deploy the database migration before the updated Worker because normal sale and credit-sale stock checks also account for delivery reservations.
+Delivery adds D1 tables and one `products` column. The production D1 schema was already migrated. Do not rerun the one-time production migration. For a different, newly created D1 database, inspect and migrate it once before deploying the Worker because sale stock checks account for delivery reservations.
 
 ## 1. Back up and migrate D1
 
-Create a D1 backup first. Apply `migrations/20261017_delivery.sql` to the same D1 database bound to the production Worker. With Wrangler, use the actual database name from the existing Worker configuration:
+For an existing database, first inspect `PRAGMA table_info(products);` and the delivery tables in the Cloudflare D1 console. The configured production database already has these changes, so skip this migration there. For a new database, inspect its schema, create a recoverable backup if it contains data, and apply `migrations/20261017_delivery.sql` once to the D1 database bound to the Worker. With Wrangler, use the actual database name from the existing Worker configuration:
 
 ```sh
 npx wrangler d1 execute YOUR_DATABASE_NAME --remote --file=migrations/20261017_delivery.sql
@@ -24,7 +24,7 @@ Add the output as the `DELIVERY_ENCRYPTION_KEY` Worker secret in Cloudflare. Kee
 
 ## 3. Deploy
 
-Deploy `outputs/worker.js` as the complete Worker source, then publish the updated Pages files from this change, including `delivery.html`, `js/delivery-public.js`, `js/delivery.js`, `service-worker.js`, and the updated `index.html` and `README.md`. Do not replace unrelated application files with partial files from this delivery patch; retain the rest of the current deployed app.
+Deploy the complete canonical Worker source at `server/worker.js` to the existing `denquva-api` Worker. The root `worker.js` is maintained as an identical full-file mirror. Then publish the merged Pages files from GitHub, including `delivery.html`, `js/delivery-public.js`, `js/delivery.js`, `service-worker.js`, and the updated `index.html`. Do not deploy a partial Worker block or replace the full app with delivery-only files.
 
 ## 4. Verify with a test EasyPost key
 
